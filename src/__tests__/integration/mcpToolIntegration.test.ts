@@ -22,34 +22,32 @@ const mockMcpClient = (toolsResponse: any[]) => ({
 } as unknown as McpClient);
 
 // Mock fetch for testing adapters directly
-jest.mock('node-fetch', () => {
-  return jest.fn().mockImplementation((url) => {
-    // Check if the URL includes OpenAI endpoints
-    if (url.toString().includes('/v1/chat/completions')) {
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({
-          choices: [
-            {
-              message: {
-                content: 'OpenAI format response',
-                role: 'assistant',
-              },
-            },
-          ],
-        }),
-        text: () => Promise.resolve(''),
-      });
-    }
-    
-    // Default response for Ollama
+jest.mock('node-fetch', () => jest.fn().mockImplementation((url) => {
+  // Check if the URL includes OpenAI endpoints
+  if (url.toString().includes('/v1/chat/completions')) {
     return Promise.resolve({
       ok: true,
-      json: () => Promise.resolve({ response: 'Ollama format response' }),
+      json: () => Promise.resolve({
+        choices: [
+          {
+            message: {
+              content: 'OpenAI format response',
+              role: 'assistant',
+            },
+          },
+        ],
+      }),
       text: () => Promise.resolve(''),
     });
+  }
+
+  // Default response for Ollama
+  return Promise.resolve({
+    ok: true,
+    json: () => Promise.resolve({ response: 'Ollama format response' }),
+    text: () => Promise.resolve(''),
   });
-});
+}));
 
 // Sample MCP tool definitions that we'd expect from MCP servers
 const sampleMcpTools = [
@@ -275,6 +273,82 @@ describe('MCP Tool Integration', () => {
       }
     });
 
+    it('should correctly translate MCP tools to OpenAI tool format for Ollama compatibility mode', async () => {
+      // This test verifies that MCP tools are correctly translated to OpenAI format
+      // when using Ollama's OpenAI compatibility mode
+
+      // Mock fetch to simulate Ollama's OpenAI-compatible endpoint
+      const mockFetch = fetch as jest.MockedFunction<typeof fetch>;
+      mockFetch.mockImplementation(() => Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          choices: [
+            {
+              message: {
+                content: '',
+                role: 'assistant',
+                tool_calls: [
+                  {
+                    id: 'call_456',
+                    type: 'function',
+                    function: {
+                      name: 'read_file',
+                      arguments: JSON.stringify({ path: '/test.txt' }),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        text: () => Promise.resolve(''),
+      } as NodeFetchResponse));
+
+      // Create Ollama adapter with OpenAI compatibility
+      const ollamaCompatAdapter = createLlmAdapter({
+        provider: 'ollama',
+        model: 'llama3.1',
+        baseUrl: 'http://localhost:11434/v1',
+        useOpenAICompatibility: true,
+      });
+
+      const mcpClient = mockMcpClient(sampleMcpTools);
+
+      // Simulate the flow using MCP tools with Ollama in OpenAI compatibility mode
+      const result = await ollamaCompatAdapter.callModelWithTools('Read a file', sampleMcpTools);
+
+      // Verify the request format (check that /v1/chat/completions was called)
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining('/v1/chat/completions'),
+        expect.objectContaining({
+          method: 'POST',
+          body: expect.any(String),
+        }),
+      );
+
+      // Get the request body to check tool format translation
+      const requestBody = JSON.parse(mockFetch.mock.calls[0][1]!.body as string);
+
+      // Verify tools were formatted as OpenAI functions in the request
+      expect(requestBody.tools).toBeDefined();
+      expect(requestBody.tools.length).toBe(2); // read_file and write_file
+      expect(requestBody.tools[0].type).toBe('function');
+      expect(requestBody.tools[0].function.name).toBe('read_file');
+      expect(requestBody.tools[0].function.parameters).toEqual(sampleMcpTools[0].parameters);
+
+      // Verify we get back a tool call in the standard LlmResponse format
+      expect(result.toolCalls).toBeDefined();
+      expect(result.toolCalls?.length).toBe(1);
+      expect(result.toolCalls?.[0].name).toBe('read_file');
+      expect(result.toolCalls?.[0].arguments).toEqual({ path: '/test.txt' });
+
+      // Verify the tool call is compatible with MCP client
+      if (result.toolCalls) {
+        await mcpClient.callTool(result.toolCalls[0].name, result.toolCalls[0].arguments);
+        expect(mcpClient.callTool).toHaveBeenCalledWith('read_file', { path: '/test.txt' });
+      }
+    });
+
     it('should handle multiple tool calls in a single response correctly', async () => {
       // Mock response with multiple tool calls
       const complexToolCallResponse = {
@@ -317,6 +391,72 @@ describe('MCP Tool Integration', () => {
 
       // The tool calls should be removed from the content
       expect(result.content).not.toContain('{"tool":');
+    });
+
+    it('should handle multiple tool calls in OpenAI compatibility mode', async () => {
+      // Mock a response with multiple tool calls from OpenAI-compatible endpoint
+      const mockFetch = fetch as jest.MockedFunction<typeof fetch>;
+      mockFetch.mockImplementation(() => Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          choices: [
+            {
+              message: {
+                content: 'I need to perform multiple operations',
+                role: 'assistant',
+                tool_calls: [
+                  {
+                    id: 'call_123',
+                    type: 'function',
+                    function: {
+                      name: 'read_file',
+                      arguments: JSON.stringify({ path: '/config.json' }),
+                    },
+                  },
+                  {
+                    id: 'call_456',
+                    type: 'function',
+                    function: {
+                      name: 'write_file',
+                      arguments: JSON.stringify({
+                        path: '/config.json',
+                        content: '{"updated": true}',
+                      }),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        text: () => Promise.resolve(''),
+      } as NodeFetchResponse));
+
+      // Create Ollama adapter with OpenAI compatibility
+      const ollamaCompatAdapter = createLlmAdapter({
+        provider: 'ollama',
+        model: 'llama3.1',
+        baseUrl: 'http://localhost:11434/v1',
+        useOpenAICompatibility: true,
+      });
+
+      // Test with multiple tool calls
+      const result = await ollamaCompatAdapter.callModelWithTools('Update my config file', sampleMcpTools);
+
+      // Verify multiple tool calls are handled correctly
+      expect(result.toolCalls).toBeDefined();
+      expect(result.toolCalls?.length).toBe(2);
+
+      // First tool call should be read_file
+      expect(result.toolCalls?.[0].name).toBe('read_file');
+      expect(result.toolCalls?.[0].arguments).toEqual({ path: '/config.json' });
+
+      // Second tool call should be write_file
+      expect(result.toolCalls?.[1].name).toBe('write_file');
+      expect(result.toolCalls?.[1].arguments).toEqual({
+        path: '/config.json',
+        content: '{"updated": true}',
+      });
     });
   });
 });
