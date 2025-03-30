@@ -7,6 +7,16 @@ import {
 } from './llmAdapter';
 
 /**
+ * Configuration specifically for the Ollama adapter
+ */
+interface OllamaConfig extends LlmConfig {
+  /**
+   * Custom template for tool calling (optional)
+   */
+  customTemplate?: string;
+}
+
+/**
  * Adapter for the Ollama API using the native APIs for chat and tools
  */
 class OllamaAdapter implements LlmAdapter {
@@ -16,7 +26,11 @@ class OllamaAdapter implements LlmAdapter {
 
   private useChat: boolean;
 
-  constructor(config: LlmConfig) {
+  private customTemplate?: string;
+
+  private isQwenModel: boolean;
+
+  constructor(config: OllamaConfig) {
     // For testing environments, we want to use localhost
     // In production Docker environments, we want to use host.docker.internal
     if (process.env.NODE_ENV === 'test') {
@@ -26,9 +40,131 @@ class OllamaAdapter implements LlmAdapter {
     }
     this.model = config.model || 'llama2';
 
+    // Store custom template if provided
+    this.customTemplate = config.customTemplate;
+
+    // Check if this is a Qwen model
+    this.isQwenModel = this.model.toLowerCase().includes('qwen');
+
+    // If it's a Qwen model and no custom template is provided, use our built-in template
+    if (this.isQwenModel && !this.customTemplate) {
+      this.customTemplate = this.getQwenToolCallingTemplate();
+    }
+
     // Determine if we should use chat API (preferred for tool support)
     // We'll try to use chat API by default for better tool support
     this.useChat = true;
+  }
+
+  /**
+   * Returns the default Qwen tool calling template
+   */
+  private getQwenToolCallingTemplate(): string {
+    return `{{- if .Suffix }}<|fim_prefix|>{{ .Prompt }}<|fim_suffix|>{{ .Suffix }}<|fim_middle|>
+{{- else if .Messages }}
+{{- if or .System .Tools }}<|im_start|>system
+{{- if .System }}
+{{ .System }}
+{{- end }}
+{{- if .Tools }}
+
+# Tools
+
+You may call one or more functions to assist with the user query.
+
+You are provided with function signatures within <tools></tools> XML tags:
+<tools>
+{{- range .Tools }}
+{"type": "function", "function": {{ .Function }}}
+{{- end }}
+</tools>
+
+For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:
+<tool_call>
+{"name": <function-name>, "arguments": <args-json-object>}
+</tool_call>
+{{- end }}<|im_end|>
+{{ end }}
+{{- range $i, $_ := .Messages }}
+{{- $last := eq (len (slice $.Messages $i)) 1 -}}
+{{- if eq .Role "user" }}<|im_start|>user
+{{ .Content }}<|im_end|>
+{{ else if eq .Role "assistant" }}<|im_start|>assistant
+{{ if .Content }}{{ .Content }}
+{{- else if .ToolCalls }}<tool_call>
+{{ range .ToolCalls }}{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}
+{{ end }}</tool_call>
+{{- end }}{{ if not $last }}<|im_end|>
+{{ end }}
+{{- else if eq .Role "tool" }}<|im_start|>user
+<tool_response>
+{{ .Content }}
+</tool_response><|im_end|>
+{{ end }}
+{{- if and (ne .Role "assistant") $last }}<|im_start|>assistant
+{{ end }}
+{{- end }}
+{{- else }}
+{{- if .System }}<|im_start|>system
+{{ .System }}<|im_end|>
+{{ end }}{{ if .Prompt }}<|im_start|>user
+{{ .Prompt }}<|im_end|>
+{{ end }}<|im_start|>assistant
+{{ end }}{{ .Response }}{{ if .Response }}<|im_end|>{{ end }}`;
+  }
+
+  /**
+   * Custom function to look for tool calls in the Qwen format
+   */
+  private parseQwenToolCalls(text: string): { toolCalls?: Array<any>, content: string } {
+    const result = {
+      content: text,
+      toolCalls: [] as Array<any>,
+    };
+
+    // Look for tool calls in <tool_call></tool_call> format
+    const toolCallRegex = /<tool_call>([\s\S]*?)<\/tool_call>/g;
+    const matches = [...text.matchAll(toolCallRegex)];
+
+    if (matches.length > 0) {
+      const toolCalls = [];
+      let modifiedContent = text;
+
+      for (const match of matches) {
+        try {
+          const jsonString = match[1].trim();
+          console.log('Found Qwen tool call:', jsonString);
+
+          const toolCallData = JSON.parse(jsonString);
+
+          if (toolCallData.name) {
+            // Qwen format: {"name": "tool_name", "arguments": {...}}
+            const mappedArguments = this.mapToolParameters(
+              toolCallData.name,
+              toolCallData.arguments || {},
+            );
+
+            toolCalls.push({
+              name: toolCallData.name,
+              arguments: mappedArguments,
+            });
+          }
+
+          // Remove the tool call from the content
+          modifiedContent = modifiedContent.replace(match[0], '');
+        } catch (error) {
+          console.warn('Failed to parse Qwen tool call:', error);
+        }
+      }
+
+      if (toolCalls.length > 0) {
+        result.toolCalls = toolCalls;
+        result.content = modifiedContent.trim();
+        console.log(`Found ${toolCalls.length} Qwen tool call(s):`, toolCalls);
+      }
+    }
+
+    return result;
   }
 
   /**
@@ -44,16 +180,38 @@ class OllamaAdapter implements LlmAdapter {
   ): Promise<LlmResponse> {
     try {
       if (this.useChat && tools.length > 0) {
-        // Use the chat API with tools (newer, better approach)
-        return this.callWithChatAPI(prompt, tools);
+        try {
+          // Use the chat API with tools (newer, better approach)
+          return await this.callWithChatAPI(prompt, tools);
+        } catch (error: any) {
+          // Check specifically for the "does not support tools" error
+          if (error.message && (
+            error.message.includes('does not support tools')
+              || error.message.includes('failed to calculate token support'))) {
+            console.log(`Model ${this.model} doesn't support tool calling with chat API, falling back to generate API with custom template`);
+            this.useChat = false;
+            // For Qwen models, make sure we're using the custom template
+            if (!this.customTemplate && this.isQwenModel) {
+              this.customTemplate = this.getQwenToolCallingTemplate();
+            }
+            return this.callWithGenerateAPI(prompt, tools);
+          }
+          // For other errors, re-throw to trigger the outer catch
+          throw error;
+        }
       }
       // Fallback to generate API (older approach)
       return this.callWithGenerateAPI(prompt, tools);
     } catch (error) {
-      // If chat API fails, fallback to generate API
-      console.error('Error using Ollama chat API, falling back to generate API:', error);
+      // If all approaches fail, log and try one more time with generate API
+      console.error('Error using Ollama API:', error);
       this.useChat = false;
-      return this.callWithGenerateAPI(prompt, tools);
+      try {
+        return this.callWithGenerateAPI(prompt, tools);
+      } catch (finalError) {
+        console.error('Final error using Ollama generate API:', finalError);
+        throw finalError;
+      }
     }
   }
 
@@ -197,27 +355,45 @@ USER QUERY: ${prompt}`;
           }
         }
       }
-      enhancedPrompt += '\nTo use a tool, respond in the following format:\n';
-      enhancedPrompt += '```json\n{"tool": "tool_name", "parameters": {"param1": "value1", "param2": "value2"}}\n```\n';
+
+      if (this.isQwenModel) {
+        // For Qwen, use XML-based tool response format
+        enhancedPrompt += '\nTo use a tool, respond with a tool call in XML format like this:\n';
+        enhancedPrompt += '<tool_call>\n{"name": "tool_name", "arguments": {"param1": "value1", "param2": "value2"}}\n</tool_call>\n';
+      } else {
+        // Standard JSON format for other models
+        enhancedPrompt += '\nTo use a tool, respond in the following format:\n';
+        enhancedPrompt += '```json\n{"tool": "tool_name", "parameters": {"param1": "value1", "param2": "value2"}}\n```\n';
+      }
+
       enhancedPrompt += 'If you don\'t need to use a tool, just respond directly to the user\'s question.';
-      enhancedPrompt += '\nYou can use multiple tools by including multiple code blocks in this format.';
-      enhancedPrompt += '\nOnly respond with tool calls if you need information to answer the user\'s question properly.';
+      enhancedPrompt += '\nYou can use multiple tools by including multiple tool calls.';
+      enhancedPrompt += '\nOnly use tools when needed to answer the user\'s question properly.';
     }
 
-    // Call the Ollama API with native /api/generate endpoint
+    // Prepare API request
+    const requestBody: any = {
+      model: this.model,
+      prompt: enhancedPrompt,
+      stream: false,
+      options: {
+        num_ctx: 4096, // Set context size to 4096 for larger context window
+      },
+    };
+
+    // Add template if we have a custom one (mainly for Qwen)
+    if (this.customTemplate) {
+      console.log('Using custom template for', this.model);
+      requestBody.template = this.customTemplate;
+    }
+
+    // Call the Ollama API with the enhanced prompt
     const response = await fetch(`${this.baseUrl}/api/generate`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        model: this.model,
-        prompt: enhancedPrompt,
-        stream: false,
-        options: {
-          num_ctx: 4096, // Set context size to 4096 for larger context window
-        },
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {
@@ -226,12 +402,21 @@ USER QUERY: ${prompt}`;
     }
 
     const result = await response.json();
-    console.log('Ollama generate response:', result);
+    console.log('Ollama generate response with tool results:', result);
 
     // Extract the generated text
     const text = result.response;
 
-    // Parse the response to check for tool calls
+    // First check for Qwen-style tool calls if this is a Qwen model
+    if (this.isQwenModel) {
+      console.log('Checking for Qwen-style tool calls in XML format');
+      const qwenResult = this.parseQwenToolCalls(text);
+      if (qwenResult.toolCalls && qwenResult.toolCalls.length > 0) {
+        return qwenResult as LlmResponse;
+      }
+    }
+
+    // Fall back to standard JSON parsing if no Qwen tool calls found
     return this.parseToolCallsFromResponse(text);
   }
 
@@ -454,14 +639,40 @@ If the tools returned errors or insufficient information:
 If the tools returned useful information:
 1. Synthesize the information clearly
 2. Provide direct answers with specific details from the results
-3. Format code snippets or file contents appropriately if relevant
+3. Format code snippets or file contents appropriately if relevant`;
 
-You may use tools again if needed by including JSON in this format:
+    // Add appropriate tool call format instructions based on model type
+    if (this.isQwenModel) {
+      enhancedPrompt += `\n\nYou may use tools again if needed by including XML in this format:
+<tool_call>
+{"name": "tool_name", "arguments": {"param1": "value1"}}
+</tool_call>
+
+IMPORTANT: Your response should be thoughtful, comprehensive and directly answer the user's original question.`;
+    } else {
+      enhancedPrompt += `\n\nYou may use tools again if needed by including JSON in this format:
 \`\`\`json
 {"tool": "tool_name", "parameters": {"param1": "value1"}}
 \`\`\`
 
 IMPORTANT: Your response should be thoughtful, comprehensive and directly answer the user's original question. Don't include phrases like "based on the tool results" - just provide the answer as if you naturally knew the information.`;
+    }
+
+    // Prepare API request
+    const requestBody: any = {
+      model: this.model,
+      prompt: enhancedPrompt,
+      stream: false,
+      options: {
+        num_ctx: 8192, // Increased context window for better handling of tool results
+      },
+    };
+
+    // Add template if we have a custom one (mainly for Qwen)
+    if (this.customTemplate) {
+      console.log('Using custom template for', this.model);
+      requestBody.template = this.customTemplate;
+    }
 
     // Call the Ollama API with the enhanced prompt
     const response = await fetch(`${this.baseUrl}/api/generate`, {
@@ -469,14 +680,7 @@ IMPORTANT: Your response should be thoughtful, comprehensive and directly answer
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        model: this.model,
-        prompt: enhancedPrompt,
-        stream: false,
-        options: {
-          num_ctx: 8192, // Increased context window for better handling of tool results
-        },
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {

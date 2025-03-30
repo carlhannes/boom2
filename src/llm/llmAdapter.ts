@@ -22,6 +22,10 @@ export interface LlmConfig {
    * Use OpenAI compatibility mode (for Ollama with models that support it)
    */
   useOpenAICompatibility?: boolean;
+  /**
+   * Custom template string for Ollama (useful for models like Qwen that need specific formats)
+   */
+  customTemplate?: string;
 }
 
 /**
