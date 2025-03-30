@@ -88,7 +88,7 @@ describe('McpClient', () => {
 
       // Create client with minimal retry settings to speed up test
       const client = new McpClient(mockBaseUrl);
-      
+
       // The client should throw an error
       await expect(client.loadTools(1, 10)).rejects.toThrow('Failed to load tools from MCP server');
     });
@@ -123,7 +123,7 @@ describe('McpClient', () => {
       // Setup axios mocks with clear reset between calls
       mockedAxios.get.mockReset();
       mockedAxios.post.mockReset();
-      
+
       mockedAxios.get.mockResolvedValue({ data: mockTools });
       mockedAxios.post.mockResolvedValue({ data: mockInvokeResponse });
 
@@ -180,7 +180,7 @@ describe('McpClient', () => {
       // Setup axios mocks with clear reset
       mockedAxios.get.mockReset();
       mockedAxios.post.mockReset();
-      
+
       mockedAxios.get.mockResolvedValue({ data: mockTools });
       mockedAxios.post.mockRejectedValue(new Error('Tool execution failed'));
 

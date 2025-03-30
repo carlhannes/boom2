@@ -7,12 +7,17 @@ import chalk from 'chalk';
  */
 export default class McpClient {
   private baseUrl?: string;
+
   private process?: ChildProcess;
+
   private transport: 'http' | 'stdio';
 
   private availableTools: any[] = [];
+
   private toolsLoaded = false;
+
   private pendingRequests: Map<string, { resolve: Function, reject: Function }> = new Map();
+
   private messageId = 1;
 
   /**
@@ -48,17 +53,17 @@ export default class McpClient {
         // For a proper implementation, we'd need to handle partial messages
         // and JSON parsing errors more robustly
         const message = JSON.parse(messageText);
-        
+
         // Handle JSON-RPC response messages
         if (message.id && this.pendingRequests.has(message.id)) {
           const { resolve, reject } = this.pendingRequests.get(message.id)!;
-          
+
           if (message.error) {
             reject(new Error(message.error.message || 'Unknown error'));
           } else {
             resolve(message.result);
           }
-          
+
           this.pendingRequests.delete(message.id);
         }
       } catch (error) {
@@ -76,7 +81,7 @@ export default class McpClient {
     // Handle process exit
     this.process.on('exit', (code, signal) => {
       console.log(chalk.gray(`MCP server process exited with code ${code} and signal ${signal}`));
-      
+
       // Reject any pending requests
       for (const [id, { reject }] of this.pendingRequests.entries()) {
         reject(new Error(`Server process exited with code ${code}`));
@@ -96,22 +101,22 @@ export default class McpClient {
     }
 
     const id = `${Date.now()}-${this.messageId++}`;
-    
+
     return new Promise((resolve, reject) => {
       this.pendingRequests.set(id, { resolve, reject });
-      
+
       const request = {
         jsonrpc: '2.0',
         id,
         method,
-        params
+        params,
       };
-      
-      const requestStr = JSON.stringify(request) + '\n';
+
+      const requestStr = `${JSON.stringify(request)}\n`;
       // Since we already checked this.process and this.process.stdin.writable above,
       // we can use the non-null assertion operator here safely
       this.process!.stdin!.write(requestStr);
-      
+
       // Set a timeout to clean up hanging requests
       setTimeout(() => {
         if (this.pendingRequests.has(id)) {
@@ -146,7 +151,7 @@ export default class McpClient {
           const result = await this.sendStdioRequest('listTools', {});
           this.availableTools = result.tools || [];
         }
-        
+
         this.toolsLoaded = true;
         console.log(`Successfully loaded ${this.availableTools.length} tools from MCP server`);
         return;
@@ -200,13 +205,13 @@ export default class McpClient {
     if (!this.toolsLoaded) {
       await this.loadTools();
     }
-    
+
     // Verify that the tool exists
     const toolExists = this.availableTools.some((t) => t.name === tool);
     if (!toolExists) {
       throw new Error(`Tool '${tool}' is not available on the MCP server`);
     }
-    
+
     try {
       if (this.transport === 'http') {
         const response = await axios.post(`${this.baseUrl}/invoke`, {
@@ -214,12 +219,11 @@ export default class McpClient {
           arguments: args,
         });
         return response.data;
-      } else {
-        return await this.sendStdioRequest('callTool', {
-          name: tool,
-          arguments: args
-        });
       }
+      return await this.sendStdioRequest('callTool', {
+        name: tool,
+        arguments: args,
+      });
     } catch (error) {
       throw new Error(`Failed to invoke tool '${tool}': ${error}`);
     }
