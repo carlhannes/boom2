@@ -90,7 +90,7 @@ async function startServer(
     // Set up output listeners
     serverProcess.stdout.on('data', (data) => {
       const output = data.toString().trim();
-      console.log(chalk.gray(`[${name}:STDOUT] ${output}`));
+      // console.log(chalk.gray(`[${name}:STDOUT] ${output}`));
 
       // Look for server startup messages
       if (!serverStartupSeen && (output.includes('running on') || output.includes('listening'))) {

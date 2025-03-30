@@ -35,9 +35,28 @@ class OllamaAdapter implements LlmAdapter {
     tools: Array<any>,
     conversationId?: string,
   ): Promise<LlmResponse> {
-    // Ollama doesn't natively support tool calls, so we need to format the prompt
-    // to include the tools in a way that the model can understand
-    let enhancedPrompt = prompt;
+    // Add a clear system prompt to explain the assistant's role and how to use tools
+    const systemPrompt = `You are Boom2, an AI coding assistant designed to help developers with programming tasks and questions about codebases.
+
+You work with the user in their project through a set of tools that allow you to read files, write code, run commands, and more.
+
+Your job is to:
+1. Understand the user's question or request
+2. Use available tools when needed to gather information or perform actions
+3. Provide clear, concise, and accurate responses based on the information you find
+4. When using tools, use the exact JSON format provided in the tool instructions
+
+Remember:
+- You are helping with real code and projects - don't make up file contents or code that doesn't exist
+- If you need to see code or files to answer a question, use the appropriate tools to access them
+- Always respond to the user's actual question, not to the tools or prompts
+- Keep your responses focused on the programming task at hand
+- Use tools deliberately - only use them when needed to answer the question
+
+USER QUERY: ${prompt}`;
+
+    // Construct the enhanced prompt with tool information
+    let enhancedPrompt = systemPrompt;
     if (tools.length > 0) {
       // Format tools as part of the prompt
       enhancedPrompt += '\n\nYou have access to the following tools:\n';
@@ -54,8 +73,9 @@ class OllamaAdapter implements LlmAdapter {
       }
       enhancedPrompt += '\nTo use a tool, respond in the following format:\n';
       enhancedPrompt += '```\n{{"tool": "tool_name", "parameters": {{"param1": "value1", "param2": "value2"}}}}\n```\n';
-      enhancedPrompt += 'If you don\'t need to use a tool, just respond normally.';
+      enhancedPrompt += 'If you don\'t need to use a tool, just respond directly to the user\'s question.';
       enhancedPrompt += '\nYou can use multiple tools by including multiple code blocks in this format.';
+      enhancedPrompt += '\nOnly respond with tool calls if you need information to answer the user\'s question properly.';
     }
 
     try {
@@ -205,18 +225,39 @@ class OllamaAdapter implements LlmAdapter {
     conversationId?: string,
   ): Promise<LlmResponse> {
     // Format a new prompt that includes the original prompt, initial response, and tool results
-    let enhancedPrompt = `Original user request: ${originalPrompt}\n\n`;
-    enhancedPrompt += `You started to respond with: ${initialResponse}\n\n`;
-    enhancedPrompt += "I've executed the tools you requested. Here are the results:\n\n";
+    let enhancedPrompt = `You are Boom2, an AI coding assistant designed to help developers with programming tasks and questions about codebases.
+
+IMPORTANT CONTEXT:
+- The user asked: "${originalPrompt}"
+- You started to respond and requested information using tools
+- I've executed the tools you requested and have the results below
+- Your job now is to provide a helpful response to the user based on these tool results
+
+Your earlier response was: "${initialResponse}"
+
+Here are the results from the tools you requested:
+
+`;
 
     // Add each tool result
     for (const { toolName, toolCall, result } of toolResults) {
-      enhancedPrompt += `Tool: ${toolName}\n`;
-      enhancedPrompt += `Arguments: ${JSON.stringify(toolCall.arguments)}\n`;
-      enhancedPrompt += `Result: ${JSON.stringify(result)}\n\n`;
+      enhancedPrompt += `TOOL: ${toolName}\n`;
+      enhancedPrompt += `PARAMETERS: ${JSON.stringify(toolCall.arguments)}\n`;
+      enhancedPrompt += `RESULT: ${JSON.stringify(result)}\n\n`;
     }
 
-    enhancedPrompt += 'Please continue your response based on these tool results. If you need to use additional tools, you can request them in the same format as before.';
+    enhancedPrompt += `Now, provide a clear and helpful response to the user's original question. Focus on giving a direct answer based on the information you've gathered.
+
+If you need additional information, you can request more tools using the format:
+\`\`\`
+{"tool": "tool_name", "parameters": {"param1": "value1", "param2": "value2"}}
+\`\`\`
+
+Remember:
+- Address the user's question directly
+- Don't reference the tool usage - just use the information from the results
+- Focus only on the programming task at hand
+- Be concise and accurate`;
 
     try {
       // Call the Ollama API with the enhanced prompt
