@@ -17,6 +17,8 @@ Boom2 is an autonomous coding agent that runs in a Docker container and provides
 - [x] OpenAI adapter implementation
 - [x] Anthropic (Claude) adapter implementation
 - [x] Ollama adapter implementation
+  - [x] Standard prompt-based tool usage for all models
+  - [x] OpenAI compatibility mode for models supporting function/tool calling
 - [ ] Streaming support for real-time responses - *In progress*
 
 ### MCP Integration
@@ -26,6 +28,7 @@ Boom2 is an autonomous coding agent that runs in a Docker container and provides
 - [x] Filesystem MCP server integration
 - [x] Memory MCP server integration
 - [x] Shell execution capability
+- [x] Standardized tool format translation between different LLMs
 
 ### Docker Environment
 - [x] Basic Dockerfile for containerization
@@ -45,8 +48,10 @@ Boom2 is an autonomous coding agent that runs in a Docker container and provides
 - [ ] Troubleshooting guide
 
 ### Testing
-- [ ] Unit tests for core components
-- [ ] Integration tests for MCP server interactions
+- [x] Unit tests for core components
+- [x] Integration tests for MCP server interactions
+  - [x] Tests for Ollama and OpenAI tool handling
+  - [x] Tests for MCP tool format compatibility
 - [ ] Docker container tests
 
 ## Upcoming Features
@@ -55,8 +60,8 @@ Boom2 is an autonomous coding agent that runs in a Docker container and provides
 1. Complete streaming support for LLM responses
 2. Implement advanced error handling and recovery
 3. Improve Docker image with layered caching for faster builds
-4. Add unit tests for core functionality
-5. Fix code style and ESLint issues
+4. Add additional tests for edge cases and error conditions
+5. Fix remaining code style and ESLint issues
 
 ### Medium-term Goals
 1. Add support for additional MCP servers (e.g., GitHub, database access)

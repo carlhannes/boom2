@@ -133,18 +133,41 @@ docker run -it --rm \
   boom2
 ```
 
-Alternatively, if you're using a remote Ollama instance, specify the base URL during configuration:
+### Ollama Configuration Options
+
+You can customize how Boom2 interacts with Ollama in your `.boom2.conf`:
 
 ```json
 {
   "llm": {
     "provider": "ollama",
     "model": "llama2",
-    "baseUrl": "http://your-ollama-host:11434"
+    "baseUrl": "http://your-ollama-host:11434",
+    "useOpenAICompatibility": false
   },
   // Other configuration...
 }
 ```
+
+#### OpenAI Compatibility Mode
+
+Ollama now supports OpenAI's function calling API with compatible models. Enable this with:
+
+```json
+{
+  "llm": {
+    "provider": "ollama",
+    "model": "llama3.1",
+    "baseUrl": "http://localhost:11434/v1",
+    "useOpenAICompatibility": true
+  }
+}
+```
+
+This mode works best with:
+- Llama 3.1 and other models that support OpenAI's tool/function calling protocol
+- Requires using `/v1` in the baseUrl to access Ollama's OpenAI-compatible endpoint
+- Provides more reliable tool usage than the standard prompt-based approach
 
 ## Development
 
