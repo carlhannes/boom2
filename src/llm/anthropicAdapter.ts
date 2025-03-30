@@ -101,6 +101,65 @@ class AnthropicAdapter implements LlmAdapter {
   }
 
   /**
+   * Calls the Anthropic API with tool results to get a final response
+   */
+  async callModelWithToolResults(
+    originalPrompt: string,
+    initialResponse: string,
+    toolResults: Array<{ toolName: string; toolCall: any; result: any }>,
+    _conversationId?: string,
+  ): Promise<LlmResponse> {
+    // Construct a prompt that includes the original question, initial response, and tool results
+    let fullPrompt = `Original request: ${originalPrompt}\n\n`;
+    fullPrompt += `You started to answer and used some tools. Your initial response was: ${initialResponse}\n\n`;
+    fullPrompt += 'Tool results:\n';
+
+    for (const result of toolResults) {
+      fullPrompt += `- Tool: ${result.toolName}\n`;
+      fullPrompt += `- Arguments: ${JSON.stringify(result.toolCall.arguments)}\n`;
+      fullPrompt += `- Result: ${JSON.stringify(result.result)}\n\n`;
+    }
+
+    fullPrompt += 'Please provide a final answer based on the tool results.';
+
+    try {
+      // Call the Anthropic API
+      const response = await fetch(`${this.baseUrl}/messages`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': this.apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: this.model,
+          messages: [
+            {
+              role: 'user',
+              content: fullPrompt,
+            },
+          ],
+          max_tokens: 2000,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`Anthropic API error: ${error}`);
+      }
+
+      const result = await response.json();
+      console.log('Anthropic response with tool results:', result);
+
+      // Extract the content from the response
+      return AnthropicAdapter.processAnthropicResponse(result);
+    } catch (error) {
+      console.error('Error calling Anthropic API with tool results:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Processes the response from Anthropic API
    */
   private static processAnthropicResponse(result: any): LlmResponse {

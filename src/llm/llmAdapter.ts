@@ -49,6 +49,16 @@ export interface LlmAdapter {
   ): Promise<LlmResponse>;
 
   /**
+   * Call the LLM with tool results to get a final response
+   */
+  callModelWithToolResults(
+    originalPrompt: string,
+    initialResponse: string,
+    toolResults: Array<{ toolName: string; toolCall: any; result: any }>,
+    conversationId?: string
+  ): Promise<LlmResponse>;
+
+  /**
    * Call the LLM with just a prompt (no tools)
    */
   callModel?(

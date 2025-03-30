@@ -61,11 +61,29 @@ export default class AgentController {
 
       if (response.toolCalls && response.toolCalls.length > 0) {
         this.logger.verbose(`LLM requested ${response.toolCalls.length} tool call(s)`);
-        // Handle tool calls
-        await this.handleToolCalls(response.toolCalls);
+
+        // Handle tool calls and collect the results
+        const toolResults = await this.handleToolCalls(response.toolCalls);
+
+        // Send the tool results back to the LLM for further processing
+        if (toolResults.length > 0) {
+          this.logger.verbose('Sending tool results back to LLM...');
+
+          // Call the LLM again with the tool results
+          const finalResponse = await llm.callModelWithToolResults(
+            input,
+            response.content,
+            toolResults,
+            this.conversationId,
+          );
+
+          // Display the LLM's final response after processing tool results
+          this.logger.success('\nAgent:', finalResponse.content);
+          return;
+        }
       }
 
-      // Display the LLM's response
+      // If no tool calls or all tool calls failed, display the original response
       this.logger.success('\nAgent:', response.content);
     } catch (error) {
       this.logger.error('Error processing user input:', error);
@@ -104,10 +122,17 @@ export default class AgentController {
    */
   private async handleToolCalls(
     toolCalls: Array<{ name: string; arguments: Record<string, any> }>,
-  ): Promise<void> {
+  ): Promise<Array<{ toolName: string; toolCall: any; result: any }>> {
+    const results = [];
+
     for (const call of toolCalls) {
-      await this.executeToolCall(call);
+      const result = await this.executeToolCall(call);
+      if (result) {
+        results.push(result);
+      }
     }
+
+    return results;
   }
 
   /**
@@ -115,7 +140,7 @@ export default class AgentController {
    */
   private async executeToolCall(
     toolCall: { name: string; arguments: Record<string, any> },
-  ): Promise<void> {
+  ): Promise<{ toolName: string; toolCall: any; result: any } | void> {
     try {
       // Find the correct server for this tool
       const toolName = toolCall.name;
@@ -137,7 +162,7 @@ export default class AgentController {
             this.logger.tool(toolName, serverName, toolCall.arguments, result);
 
             foundServer = true;
-            break;
+            return { toolName, toolCall, result };
           }
         } catch (error) {
           this.logger.warn(`Error checking tools on ${serverName}:`, error);

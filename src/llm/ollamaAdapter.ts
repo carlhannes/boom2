@@ -242,6 +242,167 @@ class OllamaAdapter implements LlmAdapter {
 
     return response;
   }
+
+  /**
+   * Calls the Ollama API with tool results to get a final response
+   * @param originalPrompt The original user prompt
+   * @param initialResponse The initial response from the LLM
+   * @param toolResults Results from tool executions
+   * @param conversationId Conversation ID (only used in OpenAI compatibility mode)
+   */
+  async callModelWithToolResults(
+    originalPrompt: string,
+    initialResponse: string,
+    toolResults: Array<{ toolName: string; toolCall: any; result: any }>,
+    conversationId?: string,
+  ): Promise<LlmResponse> {
+    // If OpenAI compatibility is enabled, use the OpenAI-compatible endpoint
+    if (this.useOpenAICompatibility) {
+      return this.callWithToolResultsOpenAICompatibility(
+        originalPrompt,
+        initialResponse,
+        toolResults,
+        conversationId,
+      );
+    }
+
+    // Format a new prompt that includes the original prompt, initial response, and tool results
+    let enhancedPrompt = `Original user request: ${originalPrompt}\n\n`;
+    enhancedPrompt += `You started to respond with: ${initialResponse}\n\n`;
+    enhancedPrompt += "I've executed the tools you requested. Here are the results:\n\n";
+
+    // Add each tool result
+    for (const { toolName, toolCall, result } of toolResults) {
+      enhancedPrompt += `Tool: ${toolName}\n`;
+      enhancedPrompt += `Arguments: ${JSON.stringify(toolCall.arguments)}\n`;
+      enhancedPrompt += `Result: ${JSON.stringify(result)}\n\n`;
+    }
+
+    enhancedPrompt += 'Please continue your response based on these tool results. If you need to use additional tools, you can request them in the same format as before.';
+
+    try {
+      // Call the Ollama API with the enhanced prompt
+      const response = await fetch(`${this.baseUrl}/api/generate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: this.model,
+          prompt: enhancedPrompt,
+          stream: false,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`Ollama API error: ${error}`);
+      }
+
+      const result = await response.json();
+      console.log('Ollama response with tool results:', result);
+
+      // Extract the generated text
+      const text = result.response;
+
+      // Parse the response to check for additional tool calls
+      return this.parseToolCallsFromResponse(text);
+    } catch (error) {
+      console.error('Error calling Ollama API with tool results:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Calls Ollama with tool results using the OpenAI-compatible endpoint
+   */
+  private async callWithToolResultsOpenAICompatibility(
+    originalPrompt: string,
+    initialResponse: string,
+    toolResults: Array<{ toolName: string; toolCall: any; result: any }>,
+    // We need this parameter for the interface, even if not used for all configurations
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    conversationId?: string,
+  ): Promise<LlmResponse> {
+    // Set up messages in OpenAI format
+    const messages = [
+      {
+        role: 'system',
+        content: 'You are a helpful AI assistant. Use tools when appropriate.',
+      },
+      {
+        role: 'user',
+        content: originalPrompt,
+      },
+      {
+        role: 'assistant',
+        content: initialResponse,
+        tool_calls: toolResults.map((result, index) => ({
+          id: `call_${index}`,
+          type: 'function',
+          function: {
+            name: result.toolName,
+            arguments: JSON.stringify(result.toolCall.arguments),
+          },
+        })),
+      },
+    ];
+
+    // Add tool results as tool response messages
+    for (const [index, result] of toolResults.entries()) {
+      messages.push({
+        role: 'tool',
+        // @ts-ignore - Ollama API with OpenAI compatibility accepts tool_call_id, but TypeScript definition doesn't include it
+        tool_call_id: `call_${index}`,
+        content: JSON.stringify(result.result),
+      });
+    }
+
+    try {
+      // Use the OpenAI-compatible endpoint
+      const endpoint = `${this.baseUrl}/chat/completions`;
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: this.model,
+          messages,
+          // Don't include tools here as we're just getting the final response
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`Ollama API error (OpenAI compatibility): ${error}`);
+      }
+
+      const result = await response.json();
+      console.log('Ollama response with tool results (OpenAI compatibility):', result);
+
+      // Parse the response in OpenAI format
+      const { message } = result.choices[0];
+      const content = message.content || '';
+
+      // Check for additional tool calls
+      let toolCalls;
+      if (message.tool_calls && message.tool_calls.length > 0) {
+        toolCalls = message.tool_calls.map((toolCall: any) => ({
+          name: toolCall.function.name,
+          arguments: JSON.parse(toolCall.function.arguments),
+        }));
+      }
+
+      return {
+        content,
+        toolCalls,
+      };
+    } catch (error) {
+      console.error('Error calling Ollama API with tool results (OpenAI compatibility):', error);
+      throw error;
+    }
+  }
 }
 
 // Register this adapter with the factory
