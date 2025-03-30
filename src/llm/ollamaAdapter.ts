@@ -11,6 +11,7 @@ import {
  */
 class OllamaAdapter implements LlmAdapter {
   private baseUrl: string;
+
   private model: string;
 
   constructor(config: LlmConfig) {
@@ -90,8 +91,8 @@ USER QUERY: ${prompt}`;
           prompt: enhancedPrompt,
           stream: false,
           options: {
-            num_ctx: 4096, // Set context size to 4096 for larger context window
-          }
+            num_ctx: 8192,
+          },
         }),
       });
 
@@ -125,6 +126,118 @@ USER QUERY: ${prompt}`;
   }
 
   /**
+   * Calls the Ollama API with tool results to get a final response
+   * @param originalPrompt The original user prompt
+   * @param initialResponse The initial response from the LLM
+   * @param toolResults Results from tool executions
+   * @param conversationId Conversation ID (not used in Ollama native API)
+   */
+  async callModelWithToolResults(
+    originalPrompt: string,
+    initialResponse: string,
+    toolResults: Array<{ toolName: string; toolCall: any; result: any }>,
+    conversationId?: string,
+  ): Promise<LlmResponse> {
+    // Format a new prompt that includes the original prompt, initial response, and tool results
+    let enhancedPrompt = `You are Boom2, an AI coding assistant designed to help developers understand and work with their code.
+
+IMPORTANT INFORMATION:
+- The user asked: "${originalPrompt}"
+- You requested information using tools
+- I've executed the tools you requested and have the results below
+- Your job now is to provide a COMPLETE and HELPFUL response based on these tool results
+
+Your initial thoughts were: "${initialResponse}"
+
+Here are the results from the tools you requested:
+`;
+
+    // Add each tool result with clear formatting
+    for (const { toolName, toolCall, result } of toolResults) {
+      enhancedPrompt += `\n--- TOOL: ${toolName} ---\n`;
+      enhancedPrompt += `PARAMETERS: ${JSON.stringify(toolCall.arguments, null, 2)}\n`;
+
+      // Format the result to be more readable
+      let resultText = '';
+      if (result.isError) {
+        resultText = `ERROR: ${JSON.stringify(result.content)}`;
+      } else if (result.content) {
+        // Try to extract the text content from the response
+        const textParts = result.content
+          .filter((item: any) => item.type === 'text')
+          .map((item: any) => item.text);
+
+        resultText = textParts.join('\n');
+
+        // If no text parts found, use the whole content
+        if (!textParts.length) {
+          resultText = JSON.stringify(result.content, null, 2);
+        }
+      } else {
+        resultText = JSON.stringify(result, null, 2);
+      }
+
+      enhancedPrompt += `RESULT:\n${resultText}\n`;
+    }
+
+    enhancedPrompt += `\nNow, please provide a comprehensive answer to the user's original question: "${originalPrompt}"
+
+Based on the tool results above, explain clearly and directly. Focus on answering the question completely.
+
+If the tools returned errors or insufficient information:
+1. Acknowledge this in your response
+2. Explain what information was missing
+3. Suggest alternative approaches
+
+If the tools returned useful information:
+1. Synthesize the information clearly
+2. Provide direct answers with specific details from the results
+3. Format code snippets or file contents appropriately if relevant
+
+You may use tools again if needed by including JSON in this format:
+\`\`\`json
+{"tool": "tool_name", "parameters": {"param1": "value1"}}
+\`\`\`
+
+IMPORTANT: Your response should be thoughtful, comprehensive and directly answer the user's original question. Don't include phrases like "based on the tool results" - just provide the answer as if you naturally knew the information.`;
+
+    try {
+      // Call the Ollama API with the enhanced prompt
+      const response = await fetch(`${this.baseUrl}/api/generate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: this.model,
+          prompt: enhancedPrompt,
+          stream: false,
+          options: {
+            num_ctx: 8192,
+          },
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`Ollama API error: ${error}`);
+      }
+
+      const result = await response.json();
+      console.log('Ollama response with tool results:', result);
+
+      // Extract the generated text
+      const text = result.response;
+
+      // Parse the response to check for additional tool calls
+      return this.parseToolCallsFromResponse(text);
+    } catch (error) {
+      console.error('Error calling Ollama API with tool results:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Parses the LLM response text to extract tool calls
    * This is needed because Ollama doesn't natively support tool calls in its standard API
    */
@@ -135,7 +248,8 @@ USER QUERY: ${prompt}`;
 
     // Look for all JSON tool calls in the response using a global regex
     // This improved pattern matches code blocks with or without language specifiers like ```json
-    const jsonPattern = /```(?:json)?\s*\n(\{.*?\})\n```/gs;
+    // We're using a more robust pattern to ensure we capture complete JSON objects
+    const jsonPattern = /```(?:json)?\s*\n([\s\S]*?)\n```/gs;
     const matches = [...text.matchAll(jsonPattern)];
 
     if (matches.length > 0) {
@@ -149,13 +263,31 @@ USER QUERY: ${prompt}`;
           // Log the original string for debugging
           console.log('Original JSON string:', jsonString);
           
+          // Make sure we're only trying to parse valid JSON objects
+          // Trim whitespace and check if it looks like a JSON object
+          jsonString = jsonString.trim();
+          if (!jsonString.startsWith('{') || !jsonString.endsWith('}')) {
+            console.log('JSON string has incomplete braces, attempting to fix');
+            // If the JSON string is missing the closing brace, add it
+            if (jsonString.startsWith('{') && !jsonString.endsWith('}')) {
+              jsonString = `${jsonString}}`;
+            }
+          }
+          
           // Fix for double braces with embedded quotes issue
-          // First, handle the outer double braces
+          // First, handle the outer double braces - this is a key fix for Qwen model
           if (jsonString.startsWith('{{') && jsonString.endsWith('}}')) {
-            jsonString = jsonString.slice(1, -1);
+            jsonString = jsonString.substring(1, jsonString.length - 1);
+          } else if (jsonString.startsWith('{{')) {
+            // Handle case where only opening double braces were added
+            jsonString = jsonString.substring(1);
+          } else if (jsonString.endsWith('}}')) {
+            // Handle case where only closing double braces were added
+            jsonString = jsonString.substring(0, jsonString.length - 1);
           }
           
           // Then fix embedded double braces with quotes like {{"param1":"value"}}
+          // More robust regex to handle various embedded double brace patterns
           jsonString = jsonString.replace(/{{\s*"([^"]*)":/g, '{"$1":');
           jsonString = jsonString.replace(/:\s*{{/g, ':{');
           jsonString = jsonString.replace(/}},/g, '},');
@@ -165,6 +297,17 @@ USER QUERY: ${prompt}`;
           jsonString = jsonString.replace(/{{/g, '{');
           jsonString = jsonString.replace(/}}/g, '}');
           
+          // Ensure the JSON string is properly formatted with balanced braces
+          const openBraces = (jsonString.match(/{/g) || []).length;
+          const closeBraces = (jsonString.match(/}/g) || []).length;
+          if (openBraces > closeBraces) {
+            // Add missing closing braces
+            jsonString = jsonString + '}'.repeat(openBraces - closeBraces);
+          } else if (closeBraces > openBraces) {
+            // Add missing opening braces at the beginning
+            jsonString = '{'.repeat(closeBraces - openBraces) + jsonString;
+          }
+          
           console.log('Attempting to parse JSON:', jsonString);
           const toolCallData = JSON.parse(jsonString);
 
@@ -173,19 +316,29 @@ USER QUERY: ${prompt}`;
           // 2. Map format: {"tool_name_1": {...}, "tool_name_2": {...}}
           
           if (toolCallData.tool) {
-            // Standard format
+            // Standard format - add with parameter mapping
+            const mappedArguments = this.mapToolParameters(
+              toolCallData.tool, 
+              toolCallData.parameters || {}
+            );
+            
             toolCalls.push({
               name: toolCallData.tool,
-              arguments: toolCallData.parameters || {},
+              arguments: mappedArguments,
             });
           } else {
             // Try the map format where tool names are keys
             const toolNames = Object.keys(toolCallData);
             for (const toolName of toolNames) {
               if (typeof toolCallData[toolName] === 'object') {
+                const mappedArguments = this.mapToolParameters(
+                  toolName,
+                  toolCallData[toolName] || {}
+                );
+                
                 toolCalls.push({
                   name: toolName,
-                  arguments: toolCallData[toolName] || {},
+                  arguments: mappedArguments,
                 });
               }
             }
@@ -213,87 +366,43 @@ USER QUERY: ${prompt}`;
   }
 
   /**
-   * Calls the Ollama API with tool results to get a final response
-   * @param originalPrompt The original user prompt
-   * @param initialResponse The initial response from the LLM
-   * @param toolResults Results from tool executions
-   * @param conversationId Conversation ID (not used in Ollama native API)
+   * Maps parameter names from LLM output to what MCP servers expect
+   * This handles cases where the LLM uses a different parameter name than what the server expects
    */
-  async callModelWithToolResults(
-    originalPrompt: string,
-    initialResponse: string,
-    toolResults: Array<{ toolName: string; toolCall: any; result: any }>,
-    conversationId?: string,
-  ): Promise<LlmResponse> {
-    // Format a new prompt that includes the original prompt, initial response, and tool results
-    let enhancedPrompt = `You are Boom2, an AI coding assistant designed to help developers with programming tasks and questions about codebases.
+  private mapToolParameters(toolName: string, parameters: Record<string, any>): Record<string, any> {
+    const parameterMappings: Record<string, Record<string, string>> = {
+      read_file: {
+        file_path: 'path',
+      },
+      read_multiple_files: {
+        file_paths: 'paths',
+      },
+      write_file: {
+        file_path: 'path',
+      },
+      search_files: {
+        directory_path: 'path',
+      },
+      list_directory: {
+        directory_path: 'path',
+      },
+      // Add other mappings as needed
+    };
 
-IMPORTANT CONTEXT:
-- The user asked: "${originalPrompt}"
-- You started to respond and requested information using tools
-- I've executed the tools you requested and have the results below
-- Your job now is to provide a helpful response to the user based on these tool results
+    const result = { ...parameters };
+    const mapping = parameterMappings[toolName];
 
-Your earlier response was: "${initialResponse}"
-
-Here are the results from the tools you requested:
-
-`;
-
-    // Add each tool result
-    for (const { toolName, toolCall, result } of toolResults) {
-      enhancedPrompt += `TOOL: ${toolName}\n`;
-      enhancedPrompt += `PARAMETERS: ${JSON.stringify(toolCall.arguments)}\n`;
-      enhancedPrompt += `RESULT: ${JSON.stringify(result)}\n\n`;
-    }
-
-    enhancedPrompt += `Now, provide a clear and helpful response to the user's original question. Focus on giving a direct answer based on the information you've gathered.
-
-If you need additional information, you can request more tools using the format:
-\`\`\`
-{"tool": "tool_name", "parameters": {"param1": "value1", "param2": "value2"}}
-\`\`\`
-
-Remember:
-- Address the user's question directly
-- Don't reference the tool usage - just use the information from the results
-- Focus only on the programming task at hand
-- Be concise and accurate`;
-
-    try {
-      // Call the Ollama API with the enhanced prompt
-      const response = await fetch(`${this.baseUrl}/api/generate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: this.model,
-          prompt: enhancedPrompt,
-          stream: false,
-          options: {
-            num_ctx: 4096, // Set context size to 4096 for larger context window
-          }
-        }),
-      });
-
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`Ollama API error: ${error}`);
+    if (mapping) {
+      // Apply mapping for this specific tool
+      for (const [fromParam, toParam] of Object.entries(mapping)) {
+        if (parameters[fromParam] !== undefined) {
+          result[toParam] = parameters[fromParam];
+          delete result[fromParam]; // Remove the original parameter
+        }
       }
-
-      const result = await response.json();
-      console.log('Ollama response with tool results:', result);
-
-      // Extract the generated text
-      const text = result.response;
-
-      // Parse the response to check for additional tool calls
-      return this.parseToolCallsFromResponse(text);
-    } catch (error) {
-      console.error('Error calling Ollama API with tool results:', error);
-      throw error;
     }
+
+    return result;
   }
 }
 
