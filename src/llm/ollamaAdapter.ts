@@ -17,7 +17,7 @@ class OllamaAdapter implements LlmAdapter {
   private useOpenAICompatibility: boolean;
 
   constructor(config: LlmConfig) {
-    this.baseUrl = config.baseUrl || 'http://localhost:11434';
+    this.baseUrl = config.baseUrl || 'http://host.docker.internal:11434';
     this.model = config.model || 'llama2';
     this.useOpenAICompatibility = config.useOpenAICompatibility || false;
   }

@@ -120,18 +120,54 @@ Boom2 will use the configured LLM to understand your request and leverage the MC
 To use Boom2 with local Ollama models:
 
 1. Install and run [Ollama](https://ollama.ai/) on your host machine
-2. Make sure your Ollama API is accessible from Docker (typically on localhost:11434)
+2. Make sure your Ollama API is accessible from Docker 
 3. When configuring Boom2, select Ollama as the provider
 
-To allow Docker to access your host's Ollama instance:
+### Connecting Docker to Host's Ollama Instance
+
+When running in Docker, `localhost` refers to the container itself, not your host machine. Boom2 uses `host.docker.internal` by default, which works on Docker for Mac and Windows without any configuration.
 
 ```bash
 docker run -it --rm \
   -v $(pwd):/home/node/project \
   -w /home/node/project \
-  --network host \
   boom2
 ```
+
+The default Ollama API URL will be `http://host.docker.internal:11434`, which should connect to your host machine's Ollama instance automatically on Mac and Windows.
+
+#### For Linux Users
+
+On Linux, `host.docker.internal` might not work by default. You have two options:
+
+1. **Use host network mode**:
+   ```bash
+   docker run -it --rm \
+     -v $(pwd):/home/node/project \
+     -w /home/node/project \
+     --network host \
+     boom2
+   ```
+   When prompted, change the Ollama API URL to `http://localhost:11434`
+
+2. **Add host.docker.internal manually**:
+   ```bash
+   docker run -it --rm \
+     -v $(pwd):/home/node/project \
+     -w /home/node/project \
+     --add-host=host.docker.internal:host-gateway \
+     boom2
+   ```
+   This adds the host.docker.internal DNS name to the container, making it work like on Mac/Windows.
+
+3. **Use your host's IP address**:
+   ```bash
+   # Find your host IP address
+   ip addr show | grep -Eo 'inet (addr:)?([0-9]*\.){3}[0-9]*' | grep -Eo '([0-9]*\.){3}[0-9]*' | grep -v '127.0.0.1'
+   
+   # Then use that IP when prompted, e.g.:
+   # http://192.168.1.100:11434
+   ```
 
 ### Ollama Configuration Options
 
@@ -142,7 +178,7 @@ You can customize how Boom2 interacts with Ollama in your `.boom2.conf`:
   "llm": {
     "provider": "ollama",
     "model": "llama2",
-    "baseUrl": "http://your-ollama-host:11434",
+    "baseUrl": "http://host.docker.internal:11434",
     "useOpenAICompatibility": false
   },
   // Other configuration...
@@ -158,7 +194,7 @@ Ollama now supports OpenAI's function calling API with compatible models. Enable
   "llm": {
     "provider": "ollama",
     "model": "llama3.1",
-    "baseUrl": "http://localhost:11434/v1",
+    "baseUrl": "http://host.docker.internal:11434/v1",
     "useOpenAICompatibility": true
   }
 }

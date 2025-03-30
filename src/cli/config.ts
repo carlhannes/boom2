@@ -75,7 +75,7 @@ async function setupLlmConfig(): Promise<LlmConfig> {
         type: 'input',
         name: 'baseUrl',
         message: 'Enter Ollama API URL:',
-        default: 'http://localhost:11434',
+        default: 'http://host.docker.internal:11434',
       },
       {
         type: 'input',
