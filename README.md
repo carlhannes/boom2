@@ -208,6 +208,8 @@ npm install
 npm run build
 ```
 
+Note: The compiled TypeScript code is output directly to the `dist` directory (not `dist/src`), as configured in `tsconfig.json`. References to compiled files should use paths like `dist/cli/cli.js` rather than `dist/src/cli/cli.js`.
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request. Check our [ROADMAP.md](./ROADMAP.md) file for planned features and development priorities.

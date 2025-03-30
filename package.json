@@ -2,13 +2,13 @@
   "name": "boom2",
   "version": "0.1.0",
   "description": "An autonomous coding agent with MCP server support",
-  "main": "dist/src/index.js",
+  "main": "dist/index.js",
   "bin": {
     "boom2": "./bin/boom2.js"
   },
   "scripts": {
     "build": "tsc",
-    "start": "node dist/src/cli/cli.js",
+    "start": "node dist/cli/cli.js",
     "dev": "ts-node src/cli/cli.ts",
     "test": "jest",
     "lint": "eslint . --ext .ts"
