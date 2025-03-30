@@ -100,7 +100,8 @@ export default class McpClient {
       throw new Error('MCP server process is not available or not writable');
     }
 
-    const id = `${Date.now()}-${this.messageId++}`;
+    const id = `${Date.now()}-${this.messageId}`;
+    this.messageId += 1;
 
     return new Promise((resolve, reject) => {
       this.pendingRequests.set(id, { resolve, reject });
