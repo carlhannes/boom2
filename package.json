@@ -1,0 +1,54 @@
+{
+  "name": "boom2",
+  "version": "0.1.0",
+  "description": "An autonomous coding agent with MCP server support",
+  "main": "dist/src/index.js",
+  "bin": {
+    "boom2": "./bin/boom2.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/src/cli/cli.js",
+    "dev": "ts-node src/cli/cli.ts",
+    "test": "jest",
+    "lint": "eslint . --ext .ts"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai",
+    "coding-agent"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/server-filesystem": "^2025.3.28",
+    "@modelcontextprotocol/server-memory": "^0.6.2",
+    "chalk": "^4.1.2",
+    "commander": "^11.1.0",
+    "conf": "^11.0.2",
+    "dotenv": "^16.3.1",
+    "inquirer": "^8.2.6",
+    "node-fetch": "^2.7.0",
+    "ora": "^5.4.1",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/inquirer": "^8.2.6",
+    "@types/jest": "^29.5.11",
+    "@types/node": "^20.10.5",
+    "@types/node-fetch": "^2.6.10",
+    "@types/uuid": "^9.0.7",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.1",
+    "eslint-config-airbnb-base": "^15.0.0",
+    "eslint-config-airbnb-typescript": "^18.0.0",
+    "eslint-plugin-import": "^2.31.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  },
+  "packageManager": "yarn@1.22.22+sha512.a6b2f7906b721bba3d67d4aff083df04dad64c399707841b7acf00f6b133b7ac24255f2652fa22ae3534329dc6180534e98d17432037ff6fd140556e2bb3137e"
+}

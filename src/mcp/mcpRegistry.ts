@@ -1,0 +1,94 @@
+import { ChildProcess } from 'child_process';
+import chalk from 'chalk';
+import McpClient from './mcpClient';
+
+/**
+ * Registry for managing MCP servers and clients
+ */
+export default class McpRegistry {
+  private servers: Map<string, {
+    serverUrl: string,
+    process?: ChildProcess,
+    builtIn: boolean,
+    client: McpClient
+  }>;
+
+  constructor() {
+    this.servers = new Map();
+  }
+
+  /**
+   * Registers an MCP server with the registry
+   */
+  registerServer(name: string, url: string, process?: ChildProcess): void {
+    this.servers.set(name, {
+      serverUrl: url,
+      process,
+      builtIn: false,
+      client: new McpClient(url),
+    });
+
+    console.log(chalk.gray(`Registered MCP server: ${name} at ${url}`));
+  }
+
+  /**
+   * Registers a built-in MCP server with the registry
+   */
+  registerBuiltInServer(name: string, url: string, server: any): void {
+    this.servers.set(name, {
+      serverUrl: url,
+      builtIn: true,
+      client: new McpClient(url),
+    });
+
+    console.log(chalk.gray(`Registered built-in MCP server: ${name} at ${url}`));
+  }
+
+  /**
+   * Unregisters an MCP server from the registry
+   */
+  unregisterServer(name: string): void {
+    if (this.servers.has(name)) {
+      console.log(chalk.gray(`Unregistered MCP server: ${name}`));
+      this.servers.delete(name);
+    }
+  }
+
+  /**
+   * Gets an MCP client by server name
+   */
+  getClient(name: string): McpClient | undefined {
+    const server = this.servers.get(name);
+    return server?.client;
+  }
+
+  /**
+   * Gets all MCP clients in the registry
+   */
+  getAllClients(): Map<string, McpClient> {
+    const clients = new Map<string, McpClient>();
+
+    for (const [name, server] of this.servers.entries()) {
+      clients.set(name, server.client);
+    }
+
+    return clients;
+  }
+
+  /**
+   * Stops all MCP servers in the registry
+   */
+  async stopAllServers(): Promise<void> {
+    console.log(chalk.blue('Stopping MCP servers...'));
+
+    for (const [name, server] of this.servers.entries()) {
+      if (server.process) {
+        console.log(chalk.gray(`Stopping MCP server: ${name}`));
+        server.process.kill();
+      }
+    }
+
+    this.servers.clear();
+    console.log(chalk.green('All MCP servers stopped'));
+  }
+}
