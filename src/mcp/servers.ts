@@ -69,7 +69,10 @@ export default async function startMcpServers(
       // Default port for MCP servers (this is just a placeholder - in reality we would
       // need to start at a base port and increment or check for available ports)
       const serverPort = 8000 + Math.floor(Math.random() * 1000);
-      const serverUrl = `http://localhost:${serverPort}`;
+      
+      // Use 0.0.0.0 instead of localhost to allow connections from within the container
+      // This is needed because MCP servers are running as child processes within the same container
+      const serverUrl = `http://0.0.0.0:${serverPort}`;
 
       // Register the server with the registry
       registry.registerServer(name, serverUrl, serverProcess);

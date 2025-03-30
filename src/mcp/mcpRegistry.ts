@@ -34,13 +34,17 @@ export default class McpRegistry {
    * Registers an MCP server with the registry
    */
   registerServer(name: string, url: string, process?: ChildProcess): void {
+    // For MCP servers running within the container, we need to replace 0.0.0.0 with localhost
+    // when creating the client, since the client needs to connect to the local server
+    const clientUrl = url.replace('0.0.0.0', 'localhost');
+    
     this.servers.set(name, {
       serverUrl: url,
       process,
       builtIn: false,
-      client: new McpClient(url),
+      client: new McpClient(clientUrl),
     });
-    console.log(chalk.gray(`Registered MCP server: ${name} at ${url}`));
+    console.log(chalk.gray(`Registered MCP server: ${name} at ${url} (client connects to ${clientUrl})`));
   }
 
   /**
@@ -70,12 +74,15 @@ export default class McpRegistry {
    * Registers a built-in MCP server with the registry
    */
   registerBuiltInServer(name: string, url: string): void {
+    // For built-in servers, we also need to replace 0.0.0.0 with localhost for client connections
+    const clientUrl = url.replace('0.0.0.0', 'localhost');
+    
     this.servers.set(name, {
       serverUrl: url,
       builtIn: true,
-      client: new McpClient(url),
+      client: new McpClient(clientUrl),
     });
-    console.log(chalk.gray(`Registered built-in MCP server: ${name} at ${url}`));
+    console.log(chalk.gray(`Registered built-in MCP server: ${name} at ${url} (client connects to ${clientUrl})`));
   }
 
   /**

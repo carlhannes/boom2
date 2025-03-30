@@ -8,6 +8,11 @@ import { loadConfig } from './config';
 import AgentController from '../agent/agentController';
 import startMcpServers from '../mcp/servers';
 
+// Import LLM adapters to ensure they're registered
+import '../llm/openAiAdapter';
+import '../llm/ollamaAdapter'; 
+import '../llm/anthropicAdapter';
+
 /**
  * Set up signal handlers for clean shutdown
  */

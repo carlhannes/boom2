@@ -253,3 +253,26 @@ Contributions are welcome! Please feel free to submit a Pull Request. Check our 
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Troubleshooting
+
+If you encounter issues, try these steps:
+
+1. Check if the `.boom2.conf` file is correctly configured.
+2. Verify that Docker has sufficient permissions to access your project directory.
+3. For Ollama connection issues, make sure Ollama is running on your host and accessible from Docker.
+
+### Common issues and solutions:
+
+#### "No adapter registered for provider: ollama"
+- This usually means that the LLM adapters weren't properly loaded. 
+- Verify that you're using the latest version of boom2.
+
+#### Connection refused errors with MCP servers
+- MCP servers run as child processes within the container.
+- If you're seeing connection errors, it could be due to network binding issues.
+- Try restarting the Docker container with a clean configuration.
+
+#### Incorrect paths in Docker
+- Remember that the container maps your current directory to `/home/node/project`.
+- All paths inside the container should be relative to this location.
