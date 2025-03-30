@@ -49,6 +49,8 @@ export default class McpClient {
       const messageText = data.toString().trim();
       if (!messageText) return;
 
+      console.log(chalk.cyan(`[MCP Client] Received message: ${messageText}`));
+
       try {
         // For a proper implementation, we'd need to handle partial messages
         // and JSON parsing errors more robustly
@@ -59,8 +61,10 @@ export default class McpClient {
           const { resolve, reject } = this.pendingRequests.get(message.id)!;
 
           if (message.error) {
+            console.error(chalk.red(`[MCP Client] Error response received: ${JSON.stringify(message.error)}`));
             reject(new Error(message.error.message || 'Unknown error'));
           } else {
+            console.log(chalk.green(`[MCP Client] Success response received: ${JSON.stringify(message.result)}`));
             resolve(message.result);
           }
 
@@ -114,6 +118,10 @@ export default class McpClient {
       };
 
       const requestStr = `${JSON.stringify(request)}\n`;
+
+      // Log the outgoing request for debugging
+      console.log(chalk.blue(`[MCP Client] Sending ${method} request: ${requestStr.trim()}`));
+
       // Since we already checked this.process and this.process.stdin.writable above,
       // we can use the non-null assertion operator here safely
       this.process!.stdin!.write(requestStr);
@@ -126,6 +134,106 @@ export default class McpClient {
         }
       }, 30000); // 30 second timeout
     });
+  }
+
+  /**
+   * Discovers the available methods on the MCP server
+   * This uses a common JSON-RPC introspection technique
+   */
+  private async discoverServerMethods(): Promise<void> {
+    try {
+      // Try standard JSON-RPC 2.0 introspection methods
+      console.log(chalk.magenta('[MCP Client] Attempting to discover server methods via introspection'));
+
+      // First try: rpc.discover (used by some JSON-RPC servers)
+      try {
+        console.log(chalk.magenta('[MCP Client] Trying rpc.discover method'));
+        const result = await this.sendStdioRequest('rpc.discover', {});
+        console.log(chalk.green(`[MCP Client] rpc.discover succeeded: ${JSON.stringify(result)}`));
+        return;
+      } catch (error: any) {
+        console.error(chalk.yellow(`[MCP Client] rpc.discover failed: ${error.message}`));
+      }
+
+      // Second try: system.listMethods (used by some JSON-RPC servers)
+      try {
+        console.log(chalk.magenta('[MCP Client] Trying system.listMethods method'));
+        const result = await this.sendStdioRequest('system.listMethods', {});
+        console.log(chalk.green(`[MCP Client] system.listMethods succeeded: ${JSON.stringify(result)}`));
+        return;
+      } catch (error: any) {
+        console.error(chalk.yellow(`[MCP Client] system.listMethods failed: ${error.message}`));
+      }
+
+      // Third try: ListMethods (non-standard but sometimes used)
+      try {
+        console.log(chalk.magenta('[MCP Client] Trying rpc.ListMethods method'));
+        const result = await this.sendStdioRequest('rpc.ListMethods', {});
+        console.log(chalk.green(`[MCP Client] rpc.ListMethods succeeded: ${JSON.stringify(result)}`));
+        return;
+      } catch (error: any) {
+        console.error(chalk.yellow(`[MCP Client] rpc.ListMethods failed: ${error.message}`));
+      }
+
+      // Fourth try: Try a common method that often exists
+      try {
+        console.log(chalk.magenta('[MCP Client] Trying a simplified get_tools method'));
+        const result = await this.sendStdioRequest('get_tools', {});
+        console.log(chalk.green(`[MCP Client] get_tools succeeded: ${JSON.stringify(result)}`));
+        return;
+      } catch (error: any) {
+        console.error(chalk.yellow(`[MCP Client] get_tools failed: ${error.message}`));
+      }
+
+      console.log(chalk.red('[MCP Client] Could not discover server methods via introspection'));
+    } catch (error: any) {
+      console.error(chalk.red(`[MCP Client] Method discovery failed: ${error.message}`));
+    }
+  }
+
+  /**
+   * Tests different versions of the MCP method prefixes
+   * to handle compatibility with different server implementations
+   *
+   * @param retries Number of retries
+   * @param attempt Current attempt number
+   */
+  private async tryDifferentMethods(retries: number, attempt: number): Promise<{ tools: any[] }> {
+    // First try to discover the methods through introspection
+    await this.discoverServerMethods();
+
+    // Based on the official MCP SDK specification, the correct method is tools/list
+    // The other variations are for backward compatibility
+    const methodVariations = [
+      'tools/list', // This is the official MCP method according to SDK
+      'tools.list',
+      'mcp.listTools',
+      'listTools',
+      'get_tools',
+      'getTools',
+      'tools.get',
+      'rpc.tools',
+      'list_mcp_tools',
+    ];
+
+    let lastError = null;
+
+    // Try each method variation before giving up
+    for (const method of methodVariations) {
+      try {
+        console.log(chalk.magenta(`[MCP Client] Trying method: ${method} (attempt ${attempt + 1}/${retries + 1})`));
+        const result = await this.sendStdioRequest(method, {});
+        console.log(chalk.green(`[MCP Client] Method ${method} succeeded!`));
+        return result;
+      } catch (error: any) {
+        lastError = error;
+        console.error(chalk.yellow(`[MCP Client] Method ${method} failed: ${error.message}`));
+        // Continue to next method variation
+      }
+    }
+
+    // If all variations failed, throw the last error
+    throw lastError;
   }
 
   /**
@@ -149,12 +257,15 @@ export default class McpClient {
           this.availableTools = response.data.tools || [];
         } else {
           console.log(`Attempting to list tools from stdio MCP server (attempt ${attempt + 1}/${retries + 1})`);
-          const result = await this.sendStdioRequest('listTools', {});
+
+          // Try different method variations to handle compatibility issues
+          const result = await this.tryDifferentMethods(retries, attempt);
           this.availableTools = result.tools || [];
         }
 
         this.toolsLoaded = true;
         console.log(`Successfully loaded ${this.availableTools.length} tools from MCP server`);
+        console.log(chalk.green(`[MCP Client] Available tools: ${JSON.stringify(this.availableTools.map((t) => t.name))}`));
         return;
       } catch (error: any) {
         lastError = error;
@@ -197,6 +308,65 @@ export default class McpClient {
   }
 
   /**
+   * Tries different method variations for calling a tool
+   * to handle compatibility with different server implementations
+   *
+   * @param tool The name of the tool to call
+   * @param args The arguments to pass to the tool
+   */
+  private async tryDifferentToolCallMethods(tool: string, args: Record<string, any>): Promise<any> {
+    const methodVariations = [
+      {
+        method: 'tools/call', // This is the official MCP method according to SDK
+        paramsFormat: { name: tool, arguments: args },
+      },
+      {
+        method: 'mcp.callTool',
+        paramsFormat: { name: tool, arguments: args },
+      },
+      {
+        method: 'callTool',
+        paramsFormat: { name: tool, arguments: args },
+      },
+      {
+        method: 'tools.call',
+        paramsFormat: { name: tool, arguments: args },
+      },
+      {
+        method: 'invoke',
+        paramsFormat: { tool, arguments: args },
+      },
+      {
+        method: 'tool.invoke',
+        paramsFormat: { name: tool, arguments: args },
+      },
+      {
+        method: tool,
+        paramsFormat: args,
+      },
+    ];
+
+    let lastError = null;
+
+    // Try each method variation before giving up
+    for (const { method, paramsFormat } of methodVariations) {
+      try {
+        console.log(chalk.magenta(`[MCP Client] Trying tool call method: ${method} with params: ${JSON.stringify(paramsFormat)}`));
+        const result = await this.sendStdioRequest(method, paramsFormat);
+        console.log(chalk.green(`[MCP Client] Tool call method ${method} succeeded!`));
+        return result;
+      } catch (error: any) {
+        lastError = error;
+        console.error(chalk.yellow(`[MCP Client] Tool call method ${method} failed: ${error.message}`));
+        // Continue to next method variation
+      }
+    }
+
+    // If all variations failed, throw the last error
+    throw lastError;
+  }
+
+  /**
    * Calls a tool on the MCP server
    *
    * @param tool The name of the tool to call
@@ -209,7 +379,7 @@ export default class McpClient {
 
     // Verify that the tool exists
     const toolExists = this.availableTools.some((t) => t.name === tool);
-    if (!toolExists) {
+    if (!toolExists && this.availableTools.length > 0) {
       throw new Error(`Tool '${tool}' is not available on the MCP server`);
     }
 
@@ -221,10 +391,9 @@ export default class McpClient {
         });
         return response.data;
       }
-      return await this.sendStdioRequest('callTool', {
-        name: tool,
-        arguments: args,
-      });
+
+      // Try different method variations to handle compatibility issues
+      return await this.tryDifferentToolCallMethods(tool, args);
     } catch (error) {
       throw new Error(`Failed to invoke tool '${tool}': ${error}`);
     }

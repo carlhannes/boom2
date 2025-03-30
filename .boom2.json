@@ -1,0 +1,28 @@
+{
+  "llm": {
+    "provider": "ollama",
+    "model": "qwen2.5-coder:32b-base-q6_K",
+    "baseUrl": "http://host.docker.internal:11434"
+  },
+  "mcpServers": {
+    "memory": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-memory"
+      ],
+      "env": {
+        "DATA_PATH": ".boom2/memory-graph.json"
+      }
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/home/node/project"
+      ]
+    }
+  },
+  "verbose": false
+}
