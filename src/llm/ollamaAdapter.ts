@@ -134,7 +134,8 @@ USER QUERY: ${prompt}`;
     };
 
     // Look for all JSON tool calls in the response using a global regex
-    const jsonPattern = /```\s*\n(\{.*?\})\n```/gs;
+    // This improved pattern matches code blocks with or without language specifiers like ```json
+    const jsonPattern = /```(?:json)?\s*\n(\{.*?\})\n```/gs;
     const matches = [...text.matchAll(jsonPattern)];
 
     if (matches.length > 0) {
