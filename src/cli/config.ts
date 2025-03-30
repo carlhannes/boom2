@@ -23,15 +23,21 @@ export const defaultConfig: Partial<Boom2Config> = {
   verbose: false,
   mcpServers: {
     memory: {
-      command: 'npx',
-      args: ['-y', '@modelcontextprotocol/server-memory'],
+      command: 'mcp-server-memory',
+      args: [],
       env: {
         DATA_PATH: '.boom2/memory-graph.json',
+        MCP_TRANSPORT: 'http',
+        MCP_HOST: '0.0.0.0'
       },
     },
     filesystem: {
-      command: 'npx',
-      args: ['-y', '@modelcontextprotocol/server-filesystem', '/home/node/project'],
+      command: 'mcp-server-filesystem',
+      args: ['/home/node/project'],
+      env: {
+        MCP_TRANSPORT: 'http',
+        MCP_HOST: '0.0.0.0'
+      },
     },
   },
 };

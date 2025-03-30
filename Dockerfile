@@ -14,6 +14,11 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 
+# Install MCP servers globally
+RUN npm install -g @modelcontextprotocol/server-memory @modelcontextprotocol/server-filesystem && \
+    # Show the installed binaries for debugging
+    ls -la /usr/local/bin/
+
 # Copy source code and build
 COPY . .
 RUN npm run build
@@ -26,6 +31,9 @@ RUN mkdir -p /app/.boom2
 
 # Set environment variables
 ENV NODE_ENV=production
+# Force MCP servers to use HTTP transport
+ENV MCP_TRANSPORT=http
+ENV MCP_HOST=0.0.0.0
 
 # Set entrypoint
 ENTRYPOINT ["node", "/app/bin/boom2.js"]

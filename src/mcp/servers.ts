@@ -72,18 +72,35 @@ export default async function startMcpServers(
         const serverPort = 8000 + Math.floor(Math.random() * 1000);
         const transport = 'http'; // Force HTTP transport instead of stdio
 
-        console.log(`Starting MCP server "${name}" with transport: ${transport}, port: ${serverPort}`);
-
+        console.log(`Starting MCP server "${name}" with command: "${fullCommand} ${args?.join(' ')}", transport: ${transport}, port: ${serverPort}`);
+        
         // Add required environment variables for HTTP transport
         const serverEnv = {
           ...process.env,
           ...env,
           MCP_TRANSPORT: transport,
           MCP_PORT: serverPort.toString(),
-          MCP_HOST: '0.0.0.0', // Bind to all interfaces
+          MCP_HOST: "0.0.0.0",  // Bind to all interfaces
+          DEBUG: "mcp:*"  // Enable MCP debug logging
         };
-
-        // Start the server process
+        
+        console.log(`Server environment variables: ${JSON.stringify({...env, MCP_TRANSPORT: transport, MCP_PORT: serverPort.toString(), MCP_HOST: '0.0.0.0', DEBUG: 'mcp:*'})}`);
+        
+        // Check if the command exists
+        try {
+          const checkPath = spawn('which', [fullCommand], { shell: true });
+          checkPath.stdout.on('data', (data) => {
+            console.log(`Command ${fullCommand} found at: ${data.toString().trim()}`);
+          });
+          checkPath.stderr.on('data', (data) => {
+            console.error(`Error finding command ${fullCommand}: ${data.toString().trim()}`);
+          });
+        } catch (error) {
+          console.error(`Error checking command ${fullCommand}:`, error);
+        }
+        
+        // Start the server process with more verbose output
+        console.log(`Spawning process: ${fullCommand} ${args?.join(' ') || ''}`);
         const serverProcess = spawn(fullCommand, args || [], {
           cwd: workingDir,
           stdio: 'pipe',
