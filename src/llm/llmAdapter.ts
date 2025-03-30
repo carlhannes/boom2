@@ -18,6 +18,10 @@ export interface LlmConfig {
    * Base URL for the API (optional)
    */
   baseUrl?: string;
+  /**
+   * Use OpenAI compatibility mode (for Ollama with models that support it)
+   */
+  useOpenAICompatibility?: boolean;
 }
 
 /**
