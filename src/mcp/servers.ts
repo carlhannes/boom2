@@ -129,7 +129,8 @@ export default async function startMcpServers(
 
     // Wait a second for servers to start up
     console.log('Waiting for MCP servers to initialize...');
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // Use void to indicate we're not interested in the return value
+    await new Promise((resolve) => { setTimeout(resolve, 2000); });
 
     return registry;
   } catch (error: any) {

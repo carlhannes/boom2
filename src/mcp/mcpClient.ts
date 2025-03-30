@@ -32,7 +32,7 @@ export default class McpClient {
     let lastError = null;
 
     // Try multiple times with increasing delay
-    for (let attempt = 0; attempt <= retries; attempt++) {
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
       try {
         console.log(`Attempting to connect to MCP server at ${this.baseUrl} (attempt ${attempt + 1}/${retries + 1})`);
         const response = await axios.get(`${this.baseUrl}/tools`);
@@ -49,7 +49,9 @@ export default class McpClient {
         if (attempt < retries) {
           const waitTime = delay * (attempt + 1); // Exponential backoff
           console.log(`Waiting ${waitTime}ms before retry...`);
-          await new Promise((resolve) => setTimeout(resolve, waitTime));
+          // ESLint complains about promises in executors, so we need to use await
+          // eslint-disable-next-line no-await-in-loop
+          await new Promise((resolve) => { setTimeout(resolve, waitTime); });
         }
       }
     }
