@@ -1,10 +1,15 @@
 import fetch from 'node-fetch';
-import { LlmAdapter, LlmConfig, LlmResponse } from './llmAdapter';
+import {
+  LlmAdapter,
+  LlmConfig,
+  LlmResponse,
+  registerLlmAdapter,
+} from './llmAdapter';
 
 /**
  * Adapter for the Ollama API
  */
-export default class OllamaAdapter implements LlmAdapter {
+class OllamaAdapter implements LlmAdapter {
   private baseUrl: string;
 
   private model: string;
@@ -16,34 +21,33 @@ export default class OllamaAdapter implements LlmAdapter {
 
   /**
    * Calls the Ollama API with tools
+   * @param prompt The user's input prompt
+   * @param tools Array of available tools
+   * @param _conversationId Conversation ID (not used in Ollama)
    */
   async callModelWithTools(
     prompt: string,
     tools: Array<any>,
-    conversationId?: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _conversationId?: string,
   ): Promise<LlmResponse> {
     // Ollama doesn't natively support tool calls, so we need to format the prompt
     // to include the tools in a way that the model can understand
     let enhancedPrompt = prompt;
-
     if (tools.length > 0) {
       // Format tools as part of the prompt
       enhancedPrompt += '\n\nYou have access to the following tools:\n';
-
       for (const tool of tools) {
         enhancedPrompt += `\nTool: ${tool.name}\n`;
         enhancedPrompt += `Description: ${tool.description}\n`;
-
         // Format parameters
         if (tool.parameters && tool.parameters.properties) {
           enhancedPrompt += 'Parameters:\n';
-
           for (const [paramName, paramDetails] of Object.entries<any>(tool.parameters.properties)) {
             enhancedPrompt += `  - ${paramName}: ${paramDetails.description || 'No description'}\n`;
           }
         }
       }
-
       enhancedPrompt += '\nTo use a tool, respond in the following format:\n';
       enhancedPrompt += '```\n{{"tool": "tool_name", "parameters": {{"param1": "value1", "param2": "value2"}}}}\n```\n';
       enhancedPrompt += 'If you don\'t need to use a tool, just respond normally.';
@@ -87,9 +91,10 @@ export default class OllamaAdapter implements LlmAdapter {
    */
   async callModel(
     prompt: string,
-    conversationId?: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _conversationId?: string,
   ): Promise<LlmResponse> {
-    return this.callModelWithTools(prompt, [], conversationId);
+    return this.callModelWithTools(prompt, [], _conversationId);
   }
 
   /**
@@ -104,11 +109,9 @@ export default class OllamaAdapter implements LlmAdapter {
     // Look for JSON tool call in the response
     const jsonPattern = /```\s*\n(\{.*?\})\n```/s;
     const match = text.match(jsonPattern);
-
     if (match && match[1]) {
       try {
         const toolCallData = JSON.parse(match[1]);
-
         if (toolCallData.tool) {
           // Found a tool call
           response.toolCalls = [
@@ -117,7 +120,6 @@ export default class OllamaAdapter implements LlmAdapter {
               arguments: toolCallData.parameters || {},
             },
           ];
-
           // Remove the tool call from the content
           console.log('Found tool call in Ollama response:', toolCallData);
           response.content = text.replace(match[0], '').trim();
@@ -130,3 +132,8 @@ export default class OllamaAdapter implements LlmAdapter {
     return response;
   }
 }
+
+// Register this adapter with the factory
+registerLlmAdapter('ollama', (config) => new OllamaAdapter(config));
+
+export default OllamaAdapter;

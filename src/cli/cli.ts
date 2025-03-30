@@ -4,47 +4,78 @@ import path from 'path';
 import chalk from 'chalk';
 import { Command } from 'commander';
 import inquirer from 'inquirer';
-import { loadConfig, defaultConfig } from './config';
-import { AgentController } from '../agent/agentController';
+import { loadConfig } from './config';
+import AgentController from '../agent/agentController';
 import startMcpServers from '../mcp/servers';
 
-const program = new Command();
+/**
+ * Set up signal handlers for clean shutdown
+ */
+function setupSignalHandlers(mcpRegistry: any, agent: AgentController): void {
+  const cleanup = async (): Promise<void> => {
+    console.log(chalk.yellow('\nShutting down boom2...'));
+    try {
+      // Close the agent (which will close the logger)
+      agent.close();
+
+      // Stop all MCP servers
+      await mcpRegistry.stopAllServers();
+
+      console.log(chalk.green('Shutdown complete. Goodbye!'));
+      process.exit(0);
+    } catch (error) {
+      console.error(chalk.red('Error during shutdown:'), error);
+      process.exit(1);
+    }
+  };
+
+  // Handle SIGINT (Ctrl+C)
+  process.on('SIGINT', cleanup);
+
+  // Handle SIGTERM
+  process.on('SIGTERM', cleanup);
+}
 
 /**
- * Entry point for the boom2 CLI tool
+ * Start an interactive prompt for user input
  */
-async function main() {
-  // Setup CLI
-  program
-    .name('boom2')
-    .description('boom2 - LLM-based programming agent')
-    .version('0.1.0');
+function startInteractivePrompt(agent: AgentController): void {
+  const promptUser = (): void => {
+    inquirer
+      .prompt([
+        {
+          type: 'input',
+          name: 'query',
+          message: '>',
+        },
+      ])
+      .then(async (answers) => {
+        const { query } = answers;
+        if (query.trim() === '') {
+          promptUser();
+          return;
+        }
 
-  // Add subcommands
-  program
-    .command('init')
-    .description('Initialize boom2 with a new configuration file')
-    .action(initConfig);
+        // Process the user's input
+        await agent.processUserInput(query);
 
-  program
-    .command('start')
-    .description('Start the boom2 agent')
-    .option('-v, --verbose', 'Enable verbose output')
-    .action(startAgent);
+        // Prompt again for the next query
+        promptUser();
+      })
+      .catch((error) => {
+        console.error(chalk.red('Error processing input:'), error);
+        promptUser();
+      });
+  };
 
-  // Parse arguments
-  program.parse(process.argv);
-
-  // If no command is provided, show help
-  if (!process.argv.slice(2).length) {
-    program.outputHelp();
-  }
+  // Start the first prompt
+  promptUser();
 }
 
 /**
  * Initialize a new configuration file
  */
-async function initConfig() {
+async function initConfig(): Promise<void> {
   console.log(chalk.blue('Initializing boom2 configuration...'));
 
   // Check if config file already exists
@@ -58,7 +89,6 @@ async function initConfig() {
         default: false,
       },
     ]);
-
     if (!overwrite) {
       console.log(chalk.yellow('Configuration creation cancelled.'));
       return;
@@ -88,8 +118,14 @@ async function initConfig() {
     apiKey = key;
   }
 
-  // Ask for model if needed
-  const defaultModel = provider === 'openai' ? 'gpt-4' : provider === 'anthropic' ? 'claude-2' : 'llama2';
+  // Ask for model based on provider
+  let defaultModel = 'llama2';
+  if (provider === 'openai') {
+    defaultModel = 'gpt-4';
+  } else if (provider === 'anthropic') {
+    defaultModel = 'claude-2';
+  }
+
   const { model } = await inquirer.prompt([
     {
       type: 'input',
@@ -101,12 +137,25 @@ async function initConfig() {
 
   // Create config
   const config = {
-    ...defaultConfig,
     llm: {
       provider,
       apiKey,
       model,
     },
+    mcpServers: {
+      memory: {
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-memory'],
+        env: {
+          DATA_PATH: '.boom2/memory-graph.json',
+        },
+      },
+      filesystem: {
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-filesystem', '/home/node/project'],
+      },
+    },
+    verbose: false,
   };
 
   // Save config
@@ -117,25 +166,47 @@ async function initConfig() {
 /**
  * Start the boom2 agent
  */
-async function startAgent(options: { verbose?: boolean }) {
+async function startAgent(options: { verbose?: boolean; logs?: boolean }): Promise<void> {
   try {
     console.log(chalk.blue('Starting boom2 agent...'));
 
     // Load configuration
     const config = await loadConfig();
 
+    // Create .boom2 directory if it doesn't exist (for logs and memory)
+    const boom2Dir = path.join(process.cwd(), '.boom2');
+    if (!fs.existsSync(boom2Dir)) {
+      fs.mkdirSync(boom2Dir, { recursive: true });
+    }
+
+    // Determine if logs should be saved to files
+    const saveLogsToFile = options.verbose && options.logs !== false;
+    if (options.verbose) {
+      if (saveLogsToFile) {
+        console.log(chalk.blue('Verbose mode enabled with file logging'));
+        // Ensure logs directory exists
+        const logsDir = path.join(boom2Dir, 'logs');
+        if (!fs.existsSync(logsDir)) {
+          fs.mkdirSync(logsDir, { recursive: true });
+        }
+      } else {
+        console.log(chalk.blue('Verbose mode enabled (without file logging)'));
+      }
+    }
+
     // Start MCP servers
     const mcpRegistry = await startMcpServers(config.mcpServers);
-
-    // Set up signal handling for clean shutdown
-    setupSignalHandlers(mcpRegistry);
 
     // Create an agent controller
     const agent = new AgentController({
       llmConfig: config.llm,
       mcpRegistry,
       verbose: !!options.verbose,
+      saveLogsToFile,
     });
+
+    // Set up signal handling for clean shutdown
+    setupSignalHandlers(mcpRegistry, agent);
 
     console.log(chalk.green('boom2 agent is ready!'));
     console.log(chalk.blue('Type your requests below or use Ctrl+C to exit'));
@@ -149,64 +220,37 @@ async function startAgent(options: { verbose?: boolean }) {
 }
 
 /**
- * Set up signal handlers for clean shutdown
+ * Entry point for the boom2 CLI tool
  */
-function setupSignalHandlers(mcpRegistry: any) {
-  const cleanup = async () => {
-    console.log(chalk.yellow('\nShutting down boom2...'));
+async function main(): Promise<void> {
+  // Setup CLI
+  const program = new Command();
 
-    try {
-      await mcpRegistry.stopAllServers();
-      console.log(chalk.green('Shutdown complete. Goodbye!'));
-      process.exit(0);
-    } catch (error) {
-      console.error(chalk.red('Error during shutdown:'), error);
-      process.exit(1);
-    }
-  };
+  program
+    .name('boom2')
+    .description('boom2 - LLM-based programming agent')
+    .version('0.1.0');
 
-  // Handle SIGINT (Ctrl+C)
-  process.on('SIGINT', cleanup);
+  // Add subcommands
+  program
+    .command('init')
+    .description('Initialize boom2 with a new configuration file')
+    .action(initConfig);
 
-  // Handle SIGTERM
-  process.on('SIGTERM', cleanup);
-}
+  program
+    .command('start')
+    .description('Start the boom2 agent')
+    .option('-v, --verbose', 'Enable verbose output')
+    .option('--no-logs', 'Disable saving logs to files (even in verbose mode)')
+    .action(startAgent);
 
-/**
- * Start an interactive prompt for user input
- */
-function startInteractivePrompt(agent: AgentController) {
-  const promptUser = () => {
-    inquirer
-      .prompt([
-        {
-          type: 'input',
-          name: 'query',
-          message: '>',
-        },
-      ])
-      .then(async (answers) => {
-        const { query } = answers;
+  // Parse arguments
+  program.parse(process.argv);
 
-        if (query.trim() === '') {
-          promptUser();
-          return;
-        }
-
-        // Process the user's input
-        await agent.processUserInput(query);
-
-        // Prompt again for the next query
-        promptUser();
-      })
-      .catch((error) => {
-        console.error(chalk.red('Error processing input:'), error);
-        promptUser();
-      });
-  };
-
-  // Start the first prompt
-  promptUser();
+  // If no command is provided, show help
+  if (!process.argv.slice(2).length) {
+    program.outputHelp();
+  }
 }
 
 // Execute the main function

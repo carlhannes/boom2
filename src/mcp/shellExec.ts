@@ -6,7 +6,7 @@ import chalk from 'chalk';
 /**
  * A minimal MCP server for executing shell commands
  */
-export class ShellExecServer {
+class ShellExecServer {
   private server: any;
 
   private port = 0;
@@ -20,9 +20,9 @@ export class ShellExecServer {
       this.server = createServer((req, res) => {
         // Handle different routes
         if (req.method === 'GET' && req.url === '/tools') {
-          this.handleTools(req, res);
+          ShellExecServer.handleTools(req, res);
         } else if (req.method === 'POST' && req.url === '/invoke') {
-          this.handleInvoke(req, res);
+          ShellExecServer.handleInvoke(req, res);
         } else {
           // Handle unknown routes
           res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -54,7 +54,7 @@ export class ShellExecServer {
   /**
    * Handles the GET /tools endpoint
    */
-  private handleTools(req: any, res: any): void {
+  private static handleTools(req: any, res: any): void {
     // Define the shell execution tool
     const tools = [
       {
@@ -81,9 +81,8 @@ export class ShellExecServer {
   /**
    * Handles the POST /invoke endpoint
    */
-  private handleInvoke(req: any, res: any): void {
+  private static handleInvoke(req: any, res: any): void {
     let body = '';
-
     req.on('data', (chunk: Buffer) => {
       body += chunk.toString();
     });
@@ -94,7 +93,7 @@ export class ShellExecServer {
 
         // Check if we're trying to execute a shell command
         if (data.tool === 'executeShellCommand') {
-          this.executeShellCommand(data.arguments.command, res);
+          ShellExecServer.executeShellCommand(data.arguments.command, res);
         } else {
           // Unknown tool
           res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -111,12 +110,11 @@ export class ShellExecServer {
   /**
    * Executes a shell command and returns the result
    */
-  private executeShellCommand(command: string, res: any): void {
+  private static executeShellCommand(command: string, res: any): void {
     console.log(chalk.yellow(`Executing shell command: ${command}`));
 
     exec(command, (error, stdout, stderr) => {
       let result;
-
       if (error) {
         // Command execution failed
         result = {
@@ -125,7 +123,6 @@ export class ShellExecServer {
           stderr,
           error: error.message,
         };
-
         console.error(chalk.red(`Command execution failed: ${error.message}`));
       } else {
         // Command executed successfully
@@ -134,7 +131,6 @@ export class ShellExecServer {
           stdout,
           stderr,
         };
-
         console.log(chalk.green('Command executed successfully'));
       }
 
@@ -144,3 +140,6 @@ export class ShellExecServer {
     });
   }
 }
+
+// Export the class as default export to fix the ESLint warning
+export default ShellExecServer;

@@ -2,14 +2,10 @@ import fs from 'fs';
 import path from 'path';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
+import { LlmConfig } from '../llm/llmAdapter';
 
 export interface Boom2Config {
-  llm: {
-    provider: string;
-    apiKey?: string;
-    model?: string;
-    baseUrl?: string;
-  };
+  llm: LlmConfig;
   mcpServers?: {
     [key: string]: {
       command: string;
@@ -21,21 +17,42 @@ export interface Boom2Config {
 }
 
 /**
+ * Default configuration for boom2
+ */
+export const defaultConfig: Partial<Boom2Config> = {
+  verbose: false,
+  mcpServers: {
+    memory: {
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-memory'],
+      env: {
+        DATA_PATH: '.boom2/memory-graph.json',
+      },
+    },
+    filesystem: {
+      command: 'npx',
+      args: ['-y', '@modelcontextprotocol/server-filesystem', '/home/node/project'],
+    },
+  },
+};
+
+/**
  * Prompts the user for LLM configuration
  */
-async function setupLlmConfig() {
+async function setupLlmConfig(): Promise<LlmConfig> {
   console.log(chalk.cyan('Setting up LLM configuration:'));
-
   const { provider } = await inquirer.prompt({
     type: 'list',
     name: 'provider',
     message: 'Which LLM provider would you like to use?',
-    choices: ['openai', 'ollama', 'anthropic', 'other'],
+    choices: ['openai', 'ollama', 'anthropic'],
   });
 
-  const config: any = { provider };
+  // Type assertion to ensure provider is one of the allowed values
+  const typedProvider = provider as 'openai' | 'anthropic' | 'ollama';
+  const config: LlmConfig = { provider: typedProvider, model: '' };
 
-  if (provider === 'openai') {
+  if (typedProvider === 'openai') {
     const { apiKey, model } = await inquirer.prompt([
       {
         type: 'password',
@@ -52,7 +69,7 @@ async function setupLlmConfig() {
     ]);
     config.apiKey = apiKey;
     config.model = model;
-  } else if (provider === 'ollama') {
+  } else if (typedProvider === 'ollama') {
     const { baseUrl, model } = await inquirer.prompt([
       {
         type: 'input',
@@ -69,7 +86,7 @@ async function setupLlmConfig() {
     ]);
     config.baseUrl = baseUrl;
     config.model = model;
-  } else if (provider === 'anthropic') {
+  } else if (typedProvider === 'anthropic') {
     const { apiKey, model } = await inquirer.prompt([
       {
         type: 'password',
@@ -86,29 +103,6 @@ async function setupLlmConfig() {
     ]);
     config.apiKey = apiKey;
     config.model = model;
-  } else if (provider === 'other') {
-    const { apiKey, model, baseUrl } = await inquirer.prompt([
-      {
-        type: 'password',
-        name: 'apiKey',
-        message: 'Enter your API key (if required):',
-      },
-      {
-        type: 'input',
-        name: 'model',
-        message: 'Enter model name:',
-        validate: (input) => (input ? true : 'Model name is required'),
-      },
-      {
-        type: 'input',
-        name: 'baseUrl',
-        message: 'Enter API URL:',
-        validate: (input) => (input ? true : 'API URL is required'),
-      },
-    ]);
-    config.apiKey = apiKey || undefined;
-    config.model = model;
-    config.baseUrl = baseUrl;
   }
 
   return config;
@@ -174,6 +168,37 @@ export async function setupConfig(configPath: string): Promise<Boom2Config> {
     return config;
   } catch (error) {
     console.error(chalk.red('Error setting up configuration:'), error);
+    throw error;
+  }
+}
+
+/**
+ * Load the configuration from the specified path or use default values
+ */
+export async function loadConfig(configPath?: string): Promise<Boom2Config> {
+  const configFile = configPath || path.join(process.cwd(), '.boom2.json');
+
+  try {
+    if (fs.existsSync(configFile)) {
+      console.log(chalk.gray(`Loading configuration from ${configFile}`));
+      const configData = fs.readFileSync(configFile, 'utf8');
+      const parsedConfig = JSON.parse(configData);
+
+      // Ensure provider is one of the allowed values
+      if (parsedConfig.llm && parsedConfig.llm.provider) {
+        const { provider } = parsedConfig.llm;
+        if (provider !== 'openai' && provider !== 'anthropic' && provider !== 'ollama') {
+          throw new Error(`Invalid LLM provider: ${provider}. Must be one of: openai, anthropic, ollama`);
+        }
+      }
+
+      return parsedConfig;
+    }
+
+    console.log(chalk.yellow('No configuration file found. Setting up a new one...'));
+    return await setupConfig(configFile);
+  } catch (error) {
+    console.error(chalk.red('Error loading configuration:'), error);
     throw error;
   }
 }

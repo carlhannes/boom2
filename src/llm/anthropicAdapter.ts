@@ -1,10 +1,15 @@
 import fetch from 'node-fetch';
-import { LlmAdapter, LlmConfig, LlmResponse } from './llmAdapter';
+import {
+  LlmAdapter,
+  LlmConfig,
+  LlmResponse,
+  registerLlmAdapter,
+} from './llmAdapter';
 
 /**
  * Adapter for the Anthropic API
  */
-export default class AnthropicAdapter implements LlmAdapter {
+class AnthropicAdapter implements LlmAdapter {
   private apiKey: string;
 
   private model: string;
@@ -15,7 +20,6 @@ export default class AnthropicAdapter implements LlmAdapter {
     if (!config.apiKey) {
       throw new Error('Anthropic API key is required');
     }
-
     this.apiKey = config.apiKey;
     this.model = config.model || 'claude-2';
     this.baseUrl = config.baseUrl || 'https://api.anthropic.com/v1';
@@ -23,15 +27,18 @@ export default class AnthropicAdapter implements LlmAdapter {
 
   /**
    * Calls the Anthropic API with tools
+   * @param prompt The user's input prompt
+   * @param tools Array of available tools
+   * @param _conversationId Conversation ID (not used in current implementation)
    */
   async callModelWithTools(
     prompt: string,
     tools: Array<any>,
-    conversationId?: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _conversationId?: string,
   ): Promise<LlmResponse> {
     // Convert tools to Anthropic's tools format
     const anthropicTools = [];
-
     for (const tool of tools) {
       anthropicTools.push({
         name: tool.name,
@@ -75,7 +82,7 @@ export default class AnthropicAdapter implements LlmAdapter {
       console.log('Anthropic response:', result);
 
       // Extract the content and tool calls
-      return this.processAnthropicResponse(result);
+      return AnthropicAdapter.processAnthropicResponse(result);
     } catch (error) {
       console.error('Error calling Anthropic API:', error);
       throw error;
@@ -87,15 +94,16 @@ export default class AnthropicAdapter implements LlmAdapter {
    */
   async callModel(
     prompt: string,
-    conversationId?: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _conversationId?: string,
   ): Promise<LlmResponse> {
-    return this.callModelWithTools(prompt, [], conversationId);
+    return this.callModelWithTools(prompt, [], _conversationId);
   }
 
   /**
    * Processes the response from Anthropic API
    */
-  private processAnthropicResponse(result: any): LlmResponse {
+  private static processAnthropicResponse(result: any): LlmResponse {
     const response: LlmResponse = {
       content: '',
     };
@@ -109,7 +117,6 @@ export default class AnthropicAdapter implements LlmAdapter {
           if (!response.toolCalls) {
             response.toolCalls = [];
           }
-
           response.toolCalls.push({
             name: contentBlock.name,
             arguments: contentBlock.input || {},
@@ -134,11 +141,9 @@ export default class AnthropicAdapter implements LlmAdapter {
     // Similar to OllamaAdapter, look for JSON tool calls in markdown blocks
     const jsonPattern = /```\s*\n(\{.*?\})\n```/s;
     const match = text.match(jsonPattern);
-
     if (match && match[1]) {
       try {
         const toolCallData = JSON.parse(match[1]);
-
         if (toolCallData.tool) {
           // Found a tool call
           response.toolCalls = [
@@ -147,7 +152,6 @@ export default class AnthropicAdapter implements LlmAdapter {
               arguments: toolCallData.parameters || {},
             },
           ];
-
           // Remove the tool call from the content
           response.content = text.replace(match[0], '').trim();
         }
@@ -159,3 +163,8 @@ export default class AnthropicAdapter implements LlmAdapter {
     return response;
   }
 }
+
+// Register this adapter with the factory
+registerLlmAdapter('anthropic', (config) => new AnthropicAdapter(config));
+
+export default AnthropicAdapter;

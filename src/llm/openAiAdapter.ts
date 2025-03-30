@@ -1,10 +1,15 @@
 import fetch from 'node-fetch';
-import { LlmAdapter, LlmConfig, LlmResponse } from './llmAdapter';
+import {
+  LlmAdapter,
+  LlmConfig,
+  LlmResponse,
+  registerLlmAdapter,
+} from './llmAdapter';
 
 /**
  * Adapter for the OpenAI API
  */
-export default class OpenAiAdapter implements LlmAdapter {
+class OpenAiAdapter implements LlmAdapter {
   private apiKey: string;
 
   private model: string;
@@ -17,7 +22,6 @@ export default class OpenAiAdapter implements LlmAdapter {
     if (!config.apiKey) {
       throw new Error('OpenAI API key is required');
     }
-
     this.apiKey = config.apiKey;
     this.model = config.model || 'gpt-4';
     this.baseUrl = config.baseUrl || 'https://api.openai.com/v1';
@@ -32,30 +36,36 @@ export default class OpenAiAdapter implements LlmAdapter {
     tools: Array<any>,
     conversationId?: string,
   ): Promise<LlmResponse> {
-    // Convert MCP tools to OpenAI function format
+    // Format the tools for OpenAI's format
     const functions = tools.map((tool) => ({
       type: 'function',
       function: {
         name: tool.name,
         description: tool.description,
-        parameters: {
-          type: 'object',
-          properties: tool.parameters.properties || {},
-          required: tool.parameters.required || [],
-        },
+        parameters: tool.parameters,
       },
     }));
 
-    // Get or create conversation history
-    const messages = this.getOrCreateConversation(conversationId);
+    // Set up conversation messages
+    let messages = [
+      {
+        role: 'system',
+        content: 'You are a helpful AI assistant. Use tools when appropriate.',
+      },
+      {
+        role: 'user',
+        content: prompt,
+      },
+    ];
 
-    // Add user message to history
-    messages.push({
-      role: 'user',
-      content: prompt,
-    });
+    // Add previous messages if we have a conversation ID
+    if (conversationId && this.conversations.has(conversationId)) {
+      const previousMessages = this.conversations.get(conversationId) || [];
+      messages = [...previousMessages, ...messages];
+    }
 
     try {
+      // Call the OpenAI API
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
@@ -76,13 +86,32 @@ export default class OpenAiAdapter implements LlmAdapter {
       }
 
       const result = await response.json();
+      console.log('OpenAI response:', result);
+
+      // Process the response
       const { message } = result.choices[0];
+      const content = message.content || '';
 
-      // Add assistant message to history
-      messages.push(message);
+      // Check for tool calls
+      let toolCalls;
+      if (message.tool_calls && message.tool_calls.length > 0) {
+        toolCalls = message.tool_calls.map((toolCall: any) => ({
+          name: toolCall.function.name,
+          arguments: JSON.parse(toolCall.function.arguments),
+        }));
+      }
 
-      // Convert OpenAI response to standardized format
-      return OpenAiAdapter.convertOpenAiResponse(message);
+      // Save this message to the conversation if we have a conversation ID
+      if (conversationId) {
+        const conversationMessages = this.conversations.get(conversationId) || [];
+        conversationMessages.push(message);
+        this.conversations.set(conversationId, conversationMessages);
+      }
+
+      return {
+        content,
+        toolCalls,
+      };
     } catch (error) {
       console.error('Error calling OpenAI API:', error);
       throw error;
@@ -98,43 +127,9 @@ export default class OpenAiAdapter implements LlmAdapter {
   ): Promise<LlmResponse> {
     return this.callModelWithTools(prompt, [], conversationId);
   }
-
-  /**
-   * Gets or creates a conversation history
-   */
-  private getOrCreateConversation(conversationId?: string): Array<any> {
-    if (!conversationId) {
-      return [{
-        role: 'system',
-        content: 'You are an AI assistant helping with coding tasks.',
-      }];
-    }
-
-    if (!this.conversations.has(conversationId)) {
-      this.conversations.set(conversationId, [{
-        role: 'system',
-        content: 'You are an AI assistant helping with coding tasks.',
-      }]);
-    }
-
-    return this.conversations.get(conversationId)!;
-  }
-
-  /**
-   * Converts OpenAI response format to standardized format
-   */
-  private static convertOpenAiResponse(message: any): LlmResponse {
-    const response: LlmResponse = {
-      content: message.content || '',
-    };
-
-    if (message.tool_calls && message.tool_calls.length > 0) {
-      response.toolCalls = message.tool_calls.map((toolCall: any) => ({
-        name: toolCall.function.name,
-        arguments: JSON.parse(toolCall.function.arguments),
-      }));
-    }
-
-    return response;
-  }
 }
+
+// Register this adapter with the factory
+registerLlmAdapter('openai', (config) => new OpenAiAdapter(config));
+
+export default OpenAiAdapter;

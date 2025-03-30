@@ -35,8 +35,8 @@ Boom2 is an autonomous coding agent that runs in a Docker container and provides
 ### User Experience
 - [x] Interactive CLI with proper formatting
 - [x] Configuration wizard for first-time setup
-- [ ] Verbose logging mode - *In progress*
-- [ ] Session logs saved to project directory when in verbose mode
+- [x] Verbose logging mode
+- [x] Session logs saved to project directory when in verbose mode
 
 ### Documentation
 - [x] Basic README with project overview
@@ -54,9 +54,9 @@ Boom2 is an autonomous coding agent that runs in a Docker container and provides
 ### Short-term Goals (Next Release)
 1. Complete streaming support for LLM responses
 2. Implement advanced error handling and recovery
-3. Add comprehensive logging system with configurable verbosity
-4. Improve Docker image with layered caching for faster builds
-5. Add unit tests for core functionality
+3. Improve Docker image with layered caching for faster builds
+4. Add unit tests for core functionality
+5. Fix code style and ESLint issues
 
 ### Medium-term Goals
 1. Add support for additional MCP servers (e.g., GitHub, database access)

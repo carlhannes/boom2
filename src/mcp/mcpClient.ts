@@ -26,7 +26,6 @@ export default class McpClient {
     if (this.toolsLoaded) {
       return;
     }
-
     try {
       const response = await axios.get(`${this.baseUrl}/tools`);
       this.availableTools = response.data.tools || [];
@@ -43,7 +42,6 @@ export default class McpClient {
     if (!this.toolsLoaded) {
       await this.loadTools();
     }
-
     return this.availableTools;
   }
 
@@ -57,22 +55,29 @@ export default class McpClient {
     if (!this.toolsLoaded) {
       await this.loadTools();
     }
-
     // Verify that the tool exists
     const toolExists = this.availableTools.some((t) => t.name === tool);
     if (!toolExists) {
       throw new Error(`Tool '${tool}' is not available on the MCP server`);
     }
-
     try {
       const response = await axios.post(`${this.baseUrl}/invoke`, {
         tool,
         arguments: args,
       });
-
       return response.data;
     } catch (error) {
       throw new Error(`Failed to invoke tool '${tool}': ${error}`);
     }
+  }
+
+  /**
+   * Alias for invokeTool for backward compatibility
+   *
+   * @param tool The name of the tool to call
+   * @param args The arguments to pass to the tool
+   */
+  async callTool(tool: string, args: Record<string, any>): Promise<any> {
+    return this.invokeTool(tool, args);
   }
 }

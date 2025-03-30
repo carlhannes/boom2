@@ -3,6 +3,16 @@ import chalk from 'chalk';
 import McpClient from './mcpClient';
 
 /**
+ * Server configuration for MCP servers
+ */
+export interface McpServerConfig {
+  command: string;
+  args?: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+}
+
+/**
  * Registry for managing MCP servers and clients
  */
 export default class McpRegistry {
@@ -13,8 +23,11 @@ export default class McpRegistry {
     client: McpClient
   }>;
 
+  private serverConfigs: Map<string, McpServerConfig>;
+
   constructor() {
     this.servers = new Map();
+    this.serverConfigs = new Map();
   }
 
   /**
@@ -27,20 +40,41 @@ export default class McpRegistry {
       builtIn: false,
       client: new McpClient(url),
     });
-
     console.log(chalk.gray(`Registered MCP server: ${name} at ${url}`));
+  }
+
+  /**
+   * Registers a server configuration
+   */
+  registerServerConfig(name: string, config: McpServerConfig): void {
+    this.serverConfigs.set(name, config);
+  }
+
+  /**
+   * Gets all server configurations
+   */
+  getServers(): Array<McpServerConfig & { name: string }> {
+    const configs: Array<McpServerConfig & { name: string }> = [];
+
+    for (const [name, config] of this.serverConfigs.entries()) {
+      configs.push({
+        name,
+        ...config,
+      });
+    }
+
+    return configs;
   }
 
   /**
    * Registers a built-in MCP server with the registry
    */
-  registerBuiltInServer(name: string, url: string, server: any): void {
+  registerBuiltInServer(name: string, url: string): void {
     this.servers.set(name, {
       serverUrl: url,
       builtIn: true,
       client: new McpClient(url),
     });
-
     console.log(chalk.gray(`Registered built-in MCP server: ${name} at ${url}`));
   }
 
@@ -51,6 +85,10 @@ export default class McpRegistry {
     if (this.servers.has(name)) {
       console.log(chalk.gray(`Unregistered MCP server: ${name}`));
       this.servers.delete(name);
+    }
+
+    if (this.serverConfigs.has(name)) {
+      this.serverConfigs.delete(name);
     }
   }
 
@@ -67,11 +105,9 @@ export default class McpRegistry {
    */
   getAllClients(): Map<string, McpClient> {
     const clients = new Map<string, McpClient>();
-
     for (const [name, server] of this.servers.entries()) {
       clients.set(name, server.client);
     }
-
     return clients;
   }
 
@@ -80,15 +116,14 @@ export default class McpRegistry {
    */
   async stopAllServers(): Promise<void> {
     console.log(chalk.blue('Stopping MCP servers...'));
-
     for (const [name, server] of this.servers.entries()) {
       if (server.process) {
         console.log(chalk.gray(`Stopping MCP server: ${name}`));
         server.process.kill();
       }
     }
-
     this.servers.clear();
+    this.serverConfigs.clear();
     console.log(chalk.green('All MCP servers stopped'));
   }
 }
