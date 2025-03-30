@@ -70,22 +70,28 @@ export default async function startMcpServers(
 
         // Configure environment to force HTTP server mode
         const serverPort = 8000 + Math.floor(Math.random() * 1000);
-        const transport = 'http'; // Force HTTP transport instead of stdio
 
-        console.log(`Starting MCP server "${name}" with command: "${fullCommand} ${args?.join(' ')}", transport: ${transport}, port: ${serverPort}`);
-        
-        // Add required environment variables for HTTP transport
+        // Create a copy of the original args
+        const serverArgs = [...(args || [])];
+
+        // Add transport arguments directly to the command line args
+        // This is critical - MCP servers prioritize command line arguments over env vars
+        serverArgs.push('--transport', 'http');
+        serverArgs.push('--port', serverPort.toString());
+        serverArgs.push('--host', '0.0.0.0');
+
+        console.log(`Starting MCP server "${name}" with command: "${fullCommand} ${serverArgs.join(' ')}", transport: http, port: ${serverPort}`);
+
+        // Keep any existing environment variables from config, but don't add transport-related ones
+        // as we're passing them as command line args instead
         const serverEnv = {
           ...process.env,
           ...env,
-          MCP_TRANSPORT: transport,
-          MCP_PORT: serverPort.toString(),
-          MCP_HOST: "0.0.0.0",  // Bind to all interfaces
-          DEBUG: "mcp:*"  // Enable MCP debug logging
+          DEBUG: 'mcp:*', // Enable MCP debug logging
         };
-        
-        console.log(`Server environment variables: ${JSON.stringify({...env, MCP_TRANSPORT: transport, MCP_PORT: serverPort.toString(), MCP_HOST: '0.0.0.0', DEBUG: 'mcp:*'})}`);
-        
+
+        console.log(`Server environment variables: ${JSON.stringify({ ...env, DEBUG: 'mcp:*' })}`);
+
         // Check if the command exists
         try {
           const checkPath = spawn('which', [fullCommand], { shell: true });
@@ -98,10 +104,10 @@ export default async function startMcpServers(
         } catch (error) {
           console.error(`Error checking command ${fullCommand}:`, error);
         }
-        
+
         // Start the server process with more verbose output
-        console.log(`Spawning process: ${fullCommand} ${args?.join(' ') || ''}`);
-        const serverProcess = spawn(fullCommand, args || [], {
+        console.log(`Spawning process: ${fullCommand} ${serverArgs.join(' ')}`);
+        const serverProcess = spawn(fullCommand, serverArgs, {
           cwd: workingDir,
           stdio: 'pipe',
           shell: true,
