@@ -7,12 +7,14 @@ import {
 } from './llmAdapter';
 
 /**
- * Adapter for the Ollama API using the native /api/generate endpoint
+ * Adapter for the Ollama API using the native APIs for chat and tools
  */
 class OllamaAdapter implements LlmAdapter {
   private baseUrl: string;
 
   private model: string;
+
+  private useChat: boolean;
 
   constructor(config: LlmConfig) {
     // For testing environments, we want to use localhost
@@ -23,10 +25,14 @@ class OllamaAdapter implements LlmAdapter {
       this.baseUrl = config.baseUrl || 'http://host.docker.internal:11434';
     }
     this.model = config.model || 'llama2';
+
+    // Determine if we should use chat API (preferred for tool support)
+    // We'll try to use chat API by default for better tool support
+    this.useChat = true;
   }
 
   /**
-   * Calls the Ollama API with tools using native /api/generate endpoint
+   * Calls the Ollama API with tools
    * @param prompt The user's input prompt
    * @param tools Array of available tools
    * @param conversationId Conversation ID (not used in Ollama native API)
@@ -35,6 +41,125 @@ class OllamaAdapter implements LlmAdapter {
     prompt: string,
     tools: Array<any>,
     conversationId?: string,
+  ): Promise<LlmResponse> {
+    try {
+      if (this.useChat && tools.length > 0) {
+        // Use the chat API with tools (newer, better approach)
+        return this.callWithChatAPI(prompt, tools);
+      }
+      // Fallback to generate API (older approach)
+      return this.callWithGenerateAPI(prompt, tools);
+    } catch (error) {
+      // If chat API fails, fallback to generate API
+      console.error('Error using Ollama chat API, falling back to generate API:', error);
+      this.useChat = false;
+      return this.callWithGenerateAPI(prompt, tools);
+    }
+  }
+
+  /**
+   * Uses Ollama's native chat API with tools
+   */
+  private async callWithChatAPI(
+    prompt: string,
+    tools: Array<any>,
+  ): Promise<LlmResponse> {
+    // Format the system message for better instructions
+    const systemMessage = `You are Boom2, an AI coding assistant designed to help developers with programming tasks and questions about codebases.
+    
+Your job is to:
+1. Understand the user's question or request
+2. Use available tools when needed to gather information or perform actions
+3. Provide clear, concise, and accurate responses based on the information you find
+4. Only use tools when necessary to answer the question`;
+
+    // Convert tools to Ollama's expected format
+    const formattedTools = tools.map((tool) => ({
+      type: 'function',
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters || {
+          type: 'object',
+          properties: {},
+        },
+      },
+    }));
+
+    // Call the chat API
+    const response = await fetch(`${this.baseUrl}/api/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: this.model,
+        messages: [
+          {
+            role: 'system',
+            content: systemMessage,
+          },
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+        tools: formattedTools.length > 0 ? formattedTools : undefined,
+        stream: false,
+        options: {
+          num_ctx: 4096,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Ollama API error: ${error}`);
+    }
+
+    const result = await response.json();
+    console.log('Ollama chat response:', result);
+
+    // Extract content and tool calls
+    const message = result.message || {};
+    const content = message.content || '';
+    let toolCalls;
+
+    // Handle tool_calls from Ollama's response
+    if (message.tool_calls && message.tool_calls.length > 0) {
+      toolCalls = message.tool_calls.map((toolCall: any) => ({
+        name: toolCall.function.name,
+        arguments: this.parseArguments(toolCall.function.arguments),
+      }));
+    }
+
+    return {
+      content,
+      toolCalls,
+    };
+  }
+
+  /**
+   * Parse arguments which may be a string instead of an object
+   */
+  private parseArguments(args: string | object): Record<string, any> {
+    if (typeof args === 'string') {
+      try {
+        return JSON.parse(args);
+      } catch (e) {
+        console.warn('Failed to parse tool arguments:', e);
+        return {};
+      }
+    }
+    return args as Record<string, any>;
+  }
+
+  /**
+   * Uses Ollama's generate API with tools (legacy approach)
+   */
+  private async callWithGenerateAPI(
+    prompt: string,
+    tools: Array<any>,
   ): Promise<LlmResponse> {
     // Add a clear system prompt to explain the assistant's role and how to use tools
     const systemPrompt = `You are Boom2, an AI coding assistant designed to help developers with programming tasks and questions about codebases.
@@ -73,46 +198,41 @@ USER QUERY: ${prompt}`;
         }
       }
       enhancedPrompt += '\nTo use a tool, respond in the following format:\n';
-      enhancedPrompt += '```\n{{"tool": "tool_name", "parameters": {{"param1": "value1", "param2": "value2"}}}}\n```\n';
+      enhancedPrompt += '```json\n{"tool": "tool_name", "parameters": {"param1": "value1", "param2": "value2"}}\n```\n';
       enhancedPrompt += 'If you don\'t need to use a tool, just respond directly to the user\'s question.';
       enhancedPrompt += '\nYou can use multiple tools by including multiple code blocks in this format.';
       enhancedPrompt += '\nOnly respond with tool calls if you need information to answer the user\'s question properly.';
     }
 
-    try {
-      // Call the Ollama API with native /api/generate endpoint
-      const response = await fetch(`${this.baseUrl}/api/generate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+    // Call the Ollama API with native /api/generate endpoint
+    const response = await fetch(`${this.baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: this.model,
+        prompt: enhancedPrompt,
+        stream: false,
+        options: {
+          num_ctx: 4096, // Set context size to 4096 for larger context window
         },
-        body: JSON.stringify({
-          model: this.model,
-          prompt: enhancedPrompt,
-          stream: false,
-          options: {
-            num_ctx: 8192,
-          },
-        }),
-      });
+      }),
+    });
 
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`Ollama API error: ${error}`);
-      }
-
-      const result = await response.json();
-      console.log('Ollama response:', result);
-
-      // Extract the generated text
-      const text = result.response;
-
-      // Parse the response to check for tool calls
-      return this.parseToolCallsFromResponse(text);
-    } catch (error) {
-      console.error('Error calling Ollama API:', error);
-      throw error;
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Ollama API error: ${error}`);
     }
+
+    const result = await response.json();
+    console.log('Ollama generate response:', result);
+
+    // Extract the generated text
+    const text = result.response;
+
+    // Parse the response to check for tool calls
+    return this.parseToolCallsFromResponse(text);
   }
 
   /**
@@ -127,16 +247,158 @@ USER QUERY: ${prompt}`;
 
   /**
    * Calls the Ollama API with tool results to get a final response
-   * @param originalPrompt The original user prompt
-   * @param initialResponse The initial response from the LLM
-   * @param toolResults Results from tool executions
-   * @param conversationId Conversation ID (not used in Ollama native API)
    */
   async callModelWithToolResults(
     originalPrompt: string,
     initialResponse: string,
     toolResults: Array<{ toolName: string; toolCall: any; result: any }>,
     conversationId?: string,
+  ): Promise<LlmResponse> {
+    try {
+      if (this.useChat) {
+        // Use the chat API for tool results (better approach)
+        return this.callWithToolResultsChatAPI(originalPrompt, initialResponse, toolResults);
+      }
+      // Fallback to generate API
+      return this.callWithToolResultsGenerateAPI(originalPrompt, initialResponse, toolResults);
+    } catch (error) {
+      console.error('Error using Ollama chat API for tool results, falling back to generate API:', error);
+      this.useChat = false;
+      return this.callWithToolResultsGenerateAPI(originalPrompt, initialResponse, toolResults);
+    }
+  }
+
+  /**
+   * Uses the chat API to follow up with tool results
+   */
+  private async callWithToolResultsChatAPI(
+    originalPrompt: string,
+    initialResponse: string,
+    toolResults: Array<{ toolName: string; toolCall: any; result: any }>,
+  ): Promise<LlmResponse> {
+    // Format the system message
+    const systemMessage = 'You are Boom2, an AI coding assistant designed to help developers understand and work with their code.';
+
+    // Create the message history
+    const messages = [
+      {
+        role: 'system',
+        content: systemMessage,
+      },
+      {
+        role: 'user',
+        content: originalPrompt,
+      },
+    ];
+
+    // Add assistant response with tool calls
+    const assistantMessage: any = {
+      role: 'assistant',
+      content: initialResponse,
+    };
+
+    // Format tool calls in Ollama's expected format
+    if (toolResults.length > 0) {
+      assistantMessage.tool_calls = toolResults.map((result, index) => ({
+        id: `call_${index}`,
+        type: 'function',
+        function: {
+          name: result.toolName,
+          arguments: JSON.stringify(result.toolCall.arguments),
+        },
+      }));
+      messages.push(assistantMessage);
+
+      // Add tool responses
+      for (const [index, result] of toolResults.entries()) {
+        let resultContent = '';
+
+        // Format the result content
+        if (result.result.isError) {
+          resultContent = `Error: ${JSON.stringify(result.result.content)}`;
+        } else if (result.result.content) {
+          // Try to extract text content
+          const textParts = result.result.content
+            .filter((item: any) => item.type === 'text')
+            .map((item: any) => item.text);
+
+          resultContent = textParts.join('\n');
+
+          // If no text parts found, use the whole content
+          if (!textParts.length) {
+            resultContent = JSON.stringify(result.result.content);
+          }
+        } else {
+          resultContent = JSON.stringify(result.result);
+        }
+
+        messages.push({
+          role: 'tool',
+          // tool_call_id: `call_${index}`,
+          content: resultContent,
+        });
+      }
+    } else {
+      // If no tool results, just add the assistant's initial response
+      messages.push(assistantMessage);
+    }
+
+    // Add the user's follow-up prompt asking for a detailed response
+    messages.push({
+      role: 'user',
+      content: 'Please provide a complete and detailed response to my original question based on these tool results.',
+    });
+
+    // Call the Ollama chat API
+    const response = await fetch(`${this.baseUrl}/api/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: this.model,
+        messages,
+        stream: false,
+        options: {
+          num_ctx: 8192, // Increased context for handling tool results
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Ollama API error: ${error}`);
+    }
+
+    const result = await response.json();
+    console.log('Ollama chat response with tool results:', result);
+
+    // Extract content and possible tool calls from the final response
+    const message = result.message || {};
+    const content = message.content || '';
+    let toolCalls;
+
+    // Handle possible follow-up tool calls
+    if (message.tool_calls && message.tool_calls.length > 0) {
+      toolCalls = message.tool_calls.map((toolCall: any) => ({
+        name: toolCall.function.name,
+        arguments: this.parseArguments(toolCall.function.arguments),
+      }));
+    }
+
+    return {
+      content,
+      toolCalls,
+    };
+  }
+
+  /**
+   * Legacy method using generate API for tool results
+   */
+  private async callWithToolResultsGenerateAPI(
+    originalPrompt: string,
+    initialResponse: string,
+    toolResults: Array<{ toolName: string; toolCall: any; result: any }>,
   ): Promise<LlmResponse> {
     // Format a new prompt that includes the original prompt, initial response, and tool results
     let enhancedPrompt = `You are Boom2, an AI coding assistant designed to help developers understand and work with their code.
@@ -201,45 +463,40 @@ You may use tools again if needed by including JSON in this format:
 
 IMPORTANT: Your response should be thoughtful, comprehensive and directly answer the user's original question. Don't include phrases like "based on the tool results" - just provide the answer as if you naturally knew the information.`;
 
-    try {
-      // Call the Ollama API with the enhanced prompt
-      const response = await fetch(`${this.baseUrl}/api/generate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+    // Call the Ollama API with the enhanced prompt
+    const response = await fetch(`${this.baseUrl}/api/generate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: this.model,
+        prompt: enhancedPrompt,
+        stream: false,
+        options: {
+          num_ctx: 8192, // Increased context window for better handling of tool results
         },
-        body: JSON.stringify({
-          model: this.model,
-          prompt: enhancedPrompt,
-          stream: false,
-          options: {
-            num_ctx: 8192,
-          },
-        }),
-      });
+      }),
+    });
 
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`Ollama API error: ${error}`);
-      }
-
-      const result = await response.json();
-      console.log('Ollama response with tool results:', result);
-
-      // Extract the generated text
-      const text = result.response;
-
-      // Parse the response to check for additional tool calls
-      return this.parseToolCallsFromResponse(text);
-    } catch (error) {
-      console.error('Error calling Ollama API with tool results:', error);
-      throw error;
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Ollama API error: ${error}`);
     }
+
+    const result = await response.json();
+    console.log('Ollama generate response with tool results:', result);
+
+    // Extract the generated text
+    const text = result.response;
+
+    // Parse the response to check for additional tool calls
+    return this.parseToolCallsFromResponse(text);
   }
 
   /**
    * Parses the LLM response text to extract tool calls
-   * This is needed because Ollama doesn't natively support tool calls in its standard API
+   * This is needed for the legacy generate API approach
    */
   private parseToolCallsFromResponse(text: string): LlmResponse {
     const response: LlmResponse = {
@@ -248,7 +505,6 @@ IMPORTANT: Your response should be thoughtful, comprehensive and directly answer
 
     // Look for all JSON tool calls in the response using a global regex
     // This improved pattern matches code blocks with or without language specifiers like ```json
-    // We're using a more robust pattern to ensure we capture complete JSON objects
     const jsonPattern = /```(?:json)?\s*\n([\s\S]*?)\n```/gs;
     const matches = [...text.matchAll(jsonPattern)];
 
@@ -259,10 +515,10 @@ IMPORTANT: Your response should be thoughtful, comprehensive and directly answer
       for (const match of matches) {
         try {
           let jsonString = match[1];
-          
+
           // Log the original string for debugging
           console.log('Original JSON string:', jsonString);
-          
+
           // Make sure we're only trying to parse valid JSON objects
           // Trim whitespace and check if it looks like a JSON object
           jsonString = jsonString.trim();
@@ -273,7 +529,7 @@ IMPORTANT: Your response should be thoughtful, comprehensive and directly answer
               jsonString = `${jsonString}}`;
             }
           }
-          
+
           // Fix for double braces with embedded quotes issue
           // First, handle the outer double braces - this is a key fix for Qwen model
           if (jsonString.startsWith('{{') && jsonString.endsWith('}}')) {
@@ -285,43 +541,43 @@ IMPORTANT: Your response should be thoughtful, comprehensive and directly answer
             // Handle case where only closing double braces were added
             jsonString = jsonString.substring(0, jsonString.length - 1);
           }
-          
+
           // Then fix embedded double braces with quotes like {{"param1":"value"}}
           // More robust regex to handle various embedded double brace patterns
           jsonString = jsonString.replace(/{{\s*"([^"]*)":/g, '{"$1":');
           jsonString = jsonString.replace(/:\s*{{/g, ':{');
           jsonString = jsonString.replace(/}},/g, '},');
           jsonString = jsonString.replace(/}}(\s*})/g, '}$1');
-          
+
           // Handle any remaining double braces
           jsonString = jsonString.replace(/{{/g, '{');
           jsonString = jsonString.replace(/}}/g, '}');
-          
+
           // Ensure the JSON string is properly formatted with balanced braces
           const openBraces = (jsonString.match(/{/g) || []).length;
           const closeBraces = (jsonString.match(/}/g) || []).length;
           if (openBraces > closeBraces) {
             // Add missing closing braces
-            jsonString = jsonString + '}'.repeat(openBraces - closeBraces);
+            jsonString += '}'.repeat(openBraces - closeBraces);
           } else if (closeBraces > openBraces) {
             // Add missing opening braces at the beginning
             jsonString = '{'.repeat(closeBraces - openBraces) + jsonString;
           }
-          
+
           console.log('Attempting to parse JSON:', jsonString);
           const toolCallData = JSON.parse(jsonString);
 
           // Handle different tool call formats:
           // 1. Standard format: {"tool": "tool_name", "parameters": {...}}
           // 2. Map format: {"tool_name_1": {...}, "tool_name_2": {...}}
-          
+
           if (toolCallData.tool) {
             // Standard format - add with parameter mapping
             const mappedArguments = this.mapToolParameters(
-              toolCallData.tool, 
-              toolCallData.parameters || {}
+              toolCallData.tool,
+              toolCallData.parameters || {},
             );
-            
+
             toolCalls.push({
               name: toolCallData.tool,
               arguments: mappedArguments,
@@ -333,9 +589,9 @@ IMPORTANT: Your response should be thoughtful, comprehensive and directly answer
               if (typeof toolCallData[toolName] === 'object') {
                 const mappedArguments = this.mapToolParameters(
                   toolName,
-                  toolCallData[toolName] || {}
+                  toolCallData[toolName] || {},
                 );
-                
+
                 toolCalls.push({
                   name: toolName,
                   arguments: mappedArguments,
