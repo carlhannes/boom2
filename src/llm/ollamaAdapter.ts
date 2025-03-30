@@ -7,14 +7,11 @@ import {
 } from './llmAdapter';
 
 /**
- * Adapter for the Ollama API
+ * Adapter for the Ollama API using the native /api/generate endpoint
  */
 class OllamaAdapter implements LlmAdapter {
   private baseUrl: string;
-
   private model: string;
-
-  private useOpenAICompatibility: boolean;
 
   constructor(config: LlmConfig) {
     // For testing environments, we want to use localhost
@@ -25,26 +22,19 @@ class OllamaAdapter implements LlmAdapter {
       this.baseUrl = config.baseUrl || 'http://host.docker.internal:11434';
     }
     this.model = config.model || 'llama2';
-    this.useOpenAICompatibility = config.useOpenAICompatibility || false;
   }
 
   /**
-   * Calls the Ollama API with tools
+   * Calls the Ollama API with tools using native /api/generate endpoint
    * @param prompt The user's input prompt
    * @param tools Array of available tools
-   * @param conversationId Conversation ID (only used in OpenAI compatibility mode)
+   * @param conversationId Conversation ID (not used in Ollama native API)
    */
   async callModelWithTools(
     prompt: string,
     tools: Array<any>,
     conversationId?: string,
   ): Promise<LlmResponse> {
-    // If OpenAI compatibility is enabled, use the OpenAI-compatible endpoint
-    if (this.useOpenAICompatibility) {
-      return this.callWithOpenAICompatibility(prompt, tools, conversationId);
-    }
-
-    // Otherwise, use the standard Ollama approach
     // Ollama doesn't natively support tool calls, so we need to format the prompt
     // to include the tools in a way that the model can understand
     let enhancedPrompt = prompt;
@@ -69,7 +59,7 @@ class OllamaAdapter implements LlmAdapter {
     }
 
     try {
-      // Call the Ollama API
+      // Call the Ollama API with native /api/generate endpoint
       const response = await fetch(`${this.baseUrl}/api/generate`, {
         method: 'POST',
         headers: {
@@ -79,6 +69,9 @@ class OllamaAdapter implements LlmAdapter {
           model: this.model,
           prompt: enhancedPrompt,
           stream: false,
+          options: {
+            num_ctx: 4096, // Set context size to 4096 for larger context window
+          }
         }),
       });
 
@@ -102,86 +95,6 @@ class OllamaAdapter implements LlmAdapter {
   }
 
   /**
-   * Calls Ollama using the OpenAI-compatible endpoint
-   * This is only available for certain models that support the OpenAI API format
-   */
-  private async callWithOpenAICompatibility(
-    prompt: string,
-    tools: Array<any>,
-    // We need this parameter for the interface, even if not used for all configurations
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    conversationId?: string,
-  ): Promise<LlmResponse> {
-    // Format tools for OpenAI compatibility
-    const functions = tools.map((tool) => ({
-      type: 'function',
-      function: {
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.parameters,
-      },
-    }));
-
-    // Set up messages
-    const messages = [
-      {
-        role: 'system',
-        content: 'You are a helpful AI assistant. Use tools when appropriate.',
-      },
-      {
-        role: 'user',
-        content: prompt,
-      },
-    ];
-
-    try {
-      // Use the OpenAI-compatible endpoint
-      const endpoint = `${this.baseUrl}/chat/completions`;
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: this.model,
-          messages,
-          tools: functions.length > 0 ? functions : undefined,
-          tool_choice: functions.length > 0 ? 'auto' : undefined,
-        }),
-      });
-
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`Ollama API error (OpenAI compatibility): ${error}`);
-      }
-
-      const result = await response.json();
-      console.log('Ollama response (OpenAI compatibility):', result);
-
-      // Parse the response in OpenAI format
-      const { message } = result.choices[0];
-      const content = message.content || '';
-
-      // Check for tool calls
-      let toolCalls;
-      if (message.tool_calls && message.tool_calls.length > 0) {
-        toolCalls = message.tool_calls.map((toolCall: any) => ({
-          name: toolCall.function.name,
-          arguments: JSON.parse(toolCall.function.arguments),
-        }));
-      }
-
-      return {
-        content,
-        toolCalls,
-      };
-    } catch (error) {
-      console.error('Error calling Ollama API (OpenAI compatibility):', error);
-      throw error;
-    }
-  }
-
-  /**
    * Calls the Ollama API without tools
    */
   async callModel(
@@ -194,11 +107,7 @@ class OllamaAdapter implements LlmAdapter {
   /**
    * Parses the LLM response text to extract tool calls
    * This is needed because Ollama doesn't natively support tool calls in its standard API
-   * This method doesn't use instance properties, but we keep it as a member method
-   * for consistency with the rest of the class
    */
-  // Using this class method to maintain consistent coding style
-  // eslint-disable-next-line class-methods-use-this
   private parseToolCallsFromResponse(text: string): LlmResponse {
     const response: LlmResponse = {
       content: text,
@@ -214,22 +123,61 @@ class OllamaAdapter implements LlmAdapter {
 
       for (const match of matches) {
         try {
-          const jsonString = match[1];
+          let jsonString = match[1];
+          
+          // Log the original string for debugging
+          console.log('Original JSON string:', jsonString);
+          
+          // Fix for double braces with embedded quotes issue
+          // First, handle the outer double braces
+          if (jsonString.startsWith('{{') && jsonString.endsWith('}}')) {
+            jsonString = jsonString.slice(1, -1);
+          }
+          
+          // Then fix embedded double braces with quotes like {{"param1":"value"}}
+          jsonString = jsonString.replace(/{{\s*"([^"]*)":/g, '{"$1":');
+          jsonString = jsonString.replace(/:\s*{{/g, ':{');
+          jsonString = jsonString.replace(/}},/g, '},');
+          jsonString = jsonString.replace(/}}(\s*})/g, '}$1');
+          
+          // Handle any remaining double braces
+          jsonString = jsonString.replace(/{{/g, '{');
+          jsonString = jsonString.replace(/}}/g, '}');
+          
+          console.log('Attempting to parse JSON:', jsonString);
           const toolCallData = JSON.parse(jsonString);
 
+          // Handle different tool call formats:
+          // 1. Standard format: {"tool": "tool_name", "parameters": {...}}
+          // 2. Map format: {"tool_name_1": {...}, "tool_name_2": {...}}
+          
           if (toolCallData.tool) {
-            // Found a valid tool call
+            // Standard format
             toolCalls.push({
               name: toolCallData.tool,
               arguments: toolCallData.parameters || {},
             });
-
-            // Remove the tool call from the content
-            modifiedContent = modifiedContent.replace(match[0], '');
+          } else {
+            // Try the map format where tool names are keys
+            const toolNames = Object.keys(toolCallData);
+            for (const toolName of toolNames) {
+              if (typeof toolCallData[toolName] === 'object') {
+                toolCalls.push({
+                  name: toolName,
+                  arguments: toolCallData[toolName] || {},
+                });
+              }
+            }
           }
+
+          // Remove the tool call from the content
+          modifiedContent = modifiedContent.replace(match[0], '');
         } catch (error) {
-          // Skip invalid JSON
+          // Log more detailed error information for debugging
           console.warn('Failed to parse tool call JSON:', error);
+          if (match && match[1]) {
+            console.warn('Original JSON string:', match[1]);
+          }
         }
       }
 
@@ -248,7 +196,7 @@ class OllamaAdapter implements LlmAdapter {
    * @param originalPrompt The original user prompt
    * @param initialResponse The initial response from the LLM
    * @param toolResults Results from tool executions
-   * @param conversationId Conversation ID (only used in OpenAI compatibility mode)
+   * @param conversationId Conversation ID (not used in Ollama native API)
    */
   async callModelWithToolResults(
     originalPrompt: string,
@@ -256,16 +204,6 @@ class OllamaAdapter implements LlmAdapter {
     toolResults: Array<{ toolName: string; toolCall: any; result: any }>,
     conversationId?: string,
   ): Promise<LlmResponse> {
-    // If OpenAI compatibility is enabled, use the OpenAI-compatible endpoint
-    if (this.useOpenAICompatibility) {
-      return this.callWithToolResultsOpenAICompatibility(
-        originalPrompt,
-        initialResponse,
-        toolResults,
-        conversationId,
-      );
-    }
-
     // Format a new prompt that includes the original prompt, initial response, and tool results
     let enhancedPrompt = `Original user request: ${originalPrompt}\n\n`;
     enhancedPrompt += `You started to respond with: ${initialResponse}\n\n`;
@@ -291,6 +229,9 @@ class OllamaAdapter implements LlmAdapter {
           model: this.model,
           prompt: enhancedPrompt,
           stream: false,
+          options: {
+            num_ctx: 4096, // Set context size to 4096 for larger context window
+          }
         }),
       });
 
@@ -309,97 +250,6 @@ class OllamaAdapter implements LlmAdapter {
       return this.parseToolCallsFromResponse(text);
     } catch (error) {
       console.error('Error calling Ollama API with tool results:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Calls Ollama with tool results using the OpenAI-compatible endpoint
-   */
-  private async callWithToolResultsOpenAICompatibility(
-    originalPrompt: string,
-    initialResponse: string,
-    toolResults: Array<{ toolName: string; toolCall: any; result: any }>,
-    // We need this parameter for the interface, even if not used for all configurations
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    conversationId?: string,
-  ): Promise<LlmResponse> {
-    // Set up messages in OpenAI format
-    const messages = [
-      {
-        role: 'system',
-        content: 'You are a helpful AI assistant. Use tools when appropriate.',
-      },
-      {
-        role: 'user',
-        content: originalPrompt,
-      },
-      {
-        role: 'assistant',
-        content: initialResponse,
-        tool_calls: toolResults.map((result, index) => ({
-          id: `call_${index}`,
-          type: 'function',
-          function: {
-            name: result.toolName,
-            arguments: JSON.stringify(result.toolCall.arguments),
-          },
-        })),
-      },
-    ];
-
-    // Add tool results as tool response messages
-    for (const [index, result] of toolResults.entries()) {
-      messages.push({
-        role: 'tool',
-        // @ts-ignore - Ollama API with OpenAI compatibility accepts tool_call_id, but TypeScript definition doesn't include it
-        tool_call_id: `call_${index}`,
-        content: JSON.stringify(result.result),
-      });
-    }
-
-    try {
-      // Use the OpenAI-compatible endpoint
-      const endpoint = `${this.baseUrl}/chat/completions`;
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: this.model,
-          messages,
-          // Don't include tools here as we're just getting the final response
-        }),
-      });
-
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`Ollama API error (OpenAI compatibility): ${error}`);
-      }
-
-      const result = await response.json();
-      console.log('Ollama response with tool results (OpenAI compatibility):', result);
-
-      // Parse the response in OpenAI format
-      const { message } = result.choices[0];
-      const content = message.content || '';
-
-      // Check for additional tool calls
-      let toolCalls;
-      if (message.tool_calls && message.tool_calls.length > 0) {
-        toolCalls = message.tool_calls.map((toolCall: any) => ({
-          name: toolCall.function.name,
-          arguments: JSON.parse(toolCall.function.arguments),
-        }));
-      }
-
-      return {
-        content,
-        toolCalls,
-      };
-    } catch (error) {
-      console.error('Error calling Ollama API with tool results (OpenAI compatibility):', error);
       throw error;
     }
   }
