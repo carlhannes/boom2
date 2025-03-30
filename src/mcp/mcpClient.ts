@@ -21,18 +21,40 @@ export default class McpClient {
 
   /**
    * Loads available tools from the MCP server
+   * @param retries Number of retries to attempt (default: 3)
+   * @param delay Delay between retries in milliseconds (default: 1000)
    */
-  async loadTools(): Promise<void> {
+  async loadTools(retries = 3, delay = 1000): Promise<void> {
     if (this.toolsLoaded) {
       return;
     }
-    try {
-      const response = await axios.get(`${this.baseUrl}/tools`);
-      this.availableTools = response.data.tools || [];
-      this.toolsLoaded = true;
-    } catch (error) {
-      throw new Error(`Failed to load tools from MCP server: ${error}`);
+
+    let lastError = null;
+
+    // Try multiple times with increasing delay
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        console.log(`Attempting to connect to MCP server at ${this.baseUrl} (attempt ${attempt + 1}/${retries + 1})`);
+        const response = await axios.get(`${this.baseUrl}/tools`);
+        this.availableTools = response.data.tools || [];
+        this.toolsLoaded = true;
+        console.log(`Successfully loaded ${this.availableTools.length} tools from MCP server at ${this.baseUrl}`);
+        return;
+      } catch (error: any) {
+        lastError = error;
+        const errorMessage = error.message || String(error);
+        console.error(`Failed to connect to MCP server at ${this.baseUrl} (attempt ${attempt + 1}/${retries + 1}): ${errorMessage}`);
+
+        // If this is not the last attempt, wait before retrying
+        if (attempt < retries) {
+          const waitTime = delay * (attempt + 1); // Exponential backoff
+          console.log(`Waiting ${waitTime}ms before retry...`);
+          await new Promise((resolve) => setTimeout(resolve, waitTime));
+        }
+      }
     }
+
+    throw new Error(`Failed to load tools from MCP server after ${retries + 1} attempts: ${lastError}`);
   }
 
   /**

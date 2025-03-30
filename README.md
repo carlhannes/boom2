@@ -270,8 +270,11 @@ If you encounter issues, try these steps:
 
 #### Connection refused errors with MCP servers
 - MCP servers run as child processes within the container.
-- If you're seeing connection errors, it could be due to network binding issues.
-- Try restarting the Docker container with a clean configuration.
+- If you're seeing connection errors, try the following:
+  1. Delete any existing `.boom2.json` file and let the container create a new one
+  2. Look for startup messages in the logs to see if servers are running on stdio instead of HTTP
+  3. Try running with `--rm` to ensure you're starting with a clean container each time
+  4. For advanced troubleshooting, run with `--verbose` flag to see detailed logs
 
 #### Incorrect paths in Docker
 - Remember that the container maps your current directory to `/home/node/project`.

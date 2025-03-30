@@ -18,80 +18,123 @@ export default async function startMcpServers(
 ): Promise<McpRegistry> {
   const registry = new McpRegistry();
 
+  console.log('Starting MCP servers...');
+
   // If no server configs are provided, return empty registry
   if (!serverConfigs) {
+    console.log('No server configurations provided, skipping MCP server startup');
     return registry;
   }
 
+  console.log(`Found ${Object.keys(serverConfigs).length} MCP server configurations to start`);
+
+  try {
   // Register server configurations
-  for (const [name, config] of Object.entries(serverConfigs)) {
-    const serverConfig: McpServerConfig = {
-      command: config.command,
-      args: config.args,
-      env: config.env,
-    };
+    for (const [name, config] of Object.entries(serverConfigs)) {
+      const serverConfig: McpServerConfig = {
+        command: config.command,
+        args: config.args,
+        env: config.env,
+      };
 
-    registry.registerServerConfig(name, serverConfig);
-  }
+      registry.registerServerConfig(name, serverConfig);
+    }
 
-  // Get all registered servers and start them
-  const servers = registry.getServers();
-  for (const serverConfig of servers) {
-    const {
-      name, command, args, cwd, env,
-    } = serverConfig;
+    // Get all registered servers and start them
+    const servers = registry.getServers();
+    for (const serverConfig of servers) {
+      const {
+        name, command, args, cwd, env,
+      } = serverConfig;
 
-    // Only process servers with a command
-    if (command) {
-      // Determine the full command path
-      let fullCommand = command;
-      if (platform() === 'win32' && !command.endsWith('.exe')) {
-        fullCommand = `${command}.exe`;
-      }
+      // Only process servers with a command
+      if (command) {
+        console.log(`Setting up MCP server "${name}" with command: ${command} ${args?.join(' ') || ''}`);
 
-      // Resolve relative paths if needed
-      let workingDir = cwd;
-      if (workingDir && !path.isAbsolute(workingDir)) {
-        workingDir = path.resolve(process.cwd(), workingDir);
-      }
+        // Determine the full command path
+        let fullCommand = command;
+        if (platform() === 'win32' && !command.endsWith('.exe')) {
+          fullCommand = `${command}.exe`;
+        }
 
-      // Start the server process
-      const serverProcess = spawn(fullCommand, args || [], {
-        cwd: workingDir,
-        stdio: 'pipe',
-        shell: true,
-        env: {
+        // Resolve relative paths if needed
+        let workingDir = cwd;
+        if (workingDir && !path.isAbsolute(workingDir)) {
+          workingDir = path.resolve(process.cwd(), workingDir);
+        }
+
+        // Log environment variables if any
+        if (env) {
+          console.log(`MCP server "${name}" environment variables:`, env);
+        }
+
+        // Configure environment to force HTTP server mode
+        const serverPort = 8000 + Math.floor(Math.random() * 1000);
+        const transport = 'http'; // Force HTTP transport instead of stdio
+
+        console.log(`Starting MCP server "${name}" with transport: ${transport}, port: ${serverPort}`);
+
+        // Add required environment variables for HTTP transport
+        const serverEnv = {
           ...process.env,
           ...env,
-        },
-      });
+          MCP_TRANSPORT: transport,
+          MCP_PORT: serverPort.toString(),
+          MCP_HOST: '0.0.0.0', // Bind to all interfaces
+        };
 
-      // Default port for MCP servers (this is just a placeholder - in reality we would
-      // need to start at a base port and increment or check for available ports)
-      const serverPort = 8000 + Math.floor(Math.random() * 1000);
-      
-      // Use 0.0.0.0 instead of localhost to allow connections from within the container
-      // This is needed because MCP servers are running as child processes within the same container
-      const serverUrl = `http://0.0.0.0:${serverPort}`;
+        // Start the server process
+        const serverProcess = spawn(fullCommand, args || [], {
+          cwd: workingDir,
+          stdio: 'pipe',
+          shell: true,
+          env: serverEnv,
+        });
 
-      // Register the server with the registry
-      registry.registerServer(name, serverUrl, serverProcess);
+        // Use 0.0.0.0 for binding but localhost for client connections
+        const serverUrl = `http://0.0.0.0:${serverPort}`;
 
-      // Handle process errors
-      serverProcess.on('error', (error) => {
-        console.error(`Failed to start server '${name}' (${command}):`, error);
-      });
+        // Wait for server to start
+        console.log(`Waiting for MCP server "${name}" to start...`);
 
-      // Log stdout and stderr
-      serverProcess.stdout.on('data', (data) => {
-        console.log(`[${name}] ${data.toString().trim()}`);
-      });
+        // Register the server with the registry
+        registry.registerServer(name, serverUrl, serverProcess);
 
-      serverProcess.stderr.on('data', (data) => {
-        console.error(`[${name}] ${data.toString().trim()}`);
-      });
+        // Handle process errors
+        serverProcess.on('error', (error) => {
+          console.error(`Failed to start server '${name}' (${command}):`, error);
+        });
+
+        // Monitor for process exit
+        serverProcess.on('exit', (code, signal) => {
+          console.error(`MCP server '${name}' exited with code ${code} and signal ${signal}`);
+        });
+
+        // Log stdout and stderr with enhanced debugging
+        serverProcess.stdout.on('data', (data) => {
+          const output = data.toString().trim();
+          console.log(`[${name}] ${output}`);
+
+          // Look for server startup messages
+          if (output.includes('running on') || output.includes('listening')) {
+            console.log(`MCP server "${name}" appears to be running.`);
+          }
+        });
+
+        serverProcess.stderr.on('data', (data) => {
+          console.error(`[${name}:ERROR] ${data.toString().trim()}`);
+        });
+      }
     }
-  }
 
-  return registry;
+    // Wait a second for servers to start up
+    console.log('Waiting for MCP servers to initialize...');
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+
+    return registry;
+  } catch (error: any) {
+    console.error('Error starting MCP servers:', error.message || String(error));
+    // Return the registry anyway, even if there were errors
+    return registry;
+  }
 }
