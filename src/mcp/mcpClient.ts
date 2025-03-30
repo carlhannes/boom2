@@ -379,7 +379,7 @@ export default class McpClient {
 
     // Verify that the tool exists
     const toolExists = this.availableTools.some((t) => t.name === tool);
-    if (!toolExists && this.availableTools.length > 0) {
+    if (!toolExists && this.toolsLoaded) {
       throw new Error(`Tool '${tool}' is not available on the MCP server`);
     }
 
