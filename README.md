@@ -14,7 +14,7 @@ Boom2 is an autonomous coding agent that runs in a Docker container and provides
   - Ollama (local models like Llama2)
   - Anthropic (Claude models)
 - **Interactive CLI**: Simple chat-based interface for coding assistance
-- **Persistent Configuration**: Settings stored in `.boom2.conf` and memory in `.boom2/memory-graph.json`
+- **Persistent Configuration**: Settings stored in `.boom2.json` and memory in `.boom2/memory-graph.json`
 
 ## Prerequisites
 
@@ -62,7 +62,7 @@ When running in verbose mode, logs will also be saved to `.boom2/logs/<datetime>
 
 ## Configuration
 
-Boom2 looks for a `.boom2.conf` file in your project directory. If none exists, it will prompt you to create one on first run.
+Boom2 looks for a `.boom2.json` file in your project directory. If none exists, it will prompt you to create one on first run.
 
 Example configuration:
 
@@ -96,6 +96,10 @@ Example configuration:
   "verbose": false
 }
 ```
+
+### MCP Server Communication
+
+Boom2 now uses stdio-based communication with MCP servers, which is the native transport protocol for most MCP servers. This provides better compatibility with the MCP SDK and ensures reliable operation across different environments.
 
 ### Memory Persistence
 
@@ -268,11 +272,11 @@ If you encounter issues, try these steps:
 - This usually means that the LLM adapters weren't properly loaded. 
 - Verify that you're using the latest version of boom2.
 
-#### Connection refused errors with MCP servers
-- MCP servers run as child processes within the container.
-- If you're seeing connection errors, try the following:
+#### MCP server startup issues
+- MCP servers run as child processes within the container using stdio transport
+- If you're seeing startup issues, try the following:
   1. Delete any existing `.boom2.json` file and let the container create a new one
-  2. Look for startup messages in the logs to see if servers are running on stdio instead of HTTP
+  2. Check the verbose logs to see detailed communication between boom2 and the MCP servers
   3. Try running with `--rm` to ensure you're starting with a clean container each time
   4. For advanced troubleshooting, run with `--verbose` flag to see detailed logs
 

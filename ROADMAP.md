@@ -29,6 +29,7 @@ Boom2 is an autonomous coding agent that runs in a Docker container and provides
 - [x] Memory MCP server integration
 - [x] Shell execution capability
 - [x] Standardized tool format translation between different LLMs
+- [x] Dual transport support (stdio and HTTP) with stdio as the primary mechanism
 
 ### Docker Environment
 - [x] Basic Dockerfile for containerization
@@ -62,6 +63,7 @@ Boom2 is an autonomous coding agent that runs in a Docker container and provides
 3. Improve Docker image with layered caching for faster builds
 4. Add additional tests for edge cases and error conditions
 5. Fix remaining code style and ESLint issues
+6. Add tests for stdio-based MCP communication
 
 ### Medium-term Goals
 1. Add support for additional MCP servers (e.g., GitHub, database access)

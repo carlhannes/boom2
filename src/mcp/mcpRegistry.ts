@@ -17,7 +17,8 @@ export interface McpServerConfig {
  */
 export default class McpRegistry {
   private servers: Map<string, {
-    serverUrl: string,
+    mode: 'http' | 'stdio',
+    serverUrl?: string,
     process?: ChildProcess,
     builtIn: boolean,
     client: McpClient
@@ -31,7 +32,7 @@ export default class McpRegistry {
   }
 
   /**
-   * Registers an MCP server with the registry
+   * Registers an HTTP MCP server with the registry
    */
   registerServer(name: string, url: string, process?: ChildProcess): void {
     // For MCP servers running within the container, we need to replace 0.0.0.0 with localhost
@@ -39,12 +40,26 @@ export default class McpRegistry {
     const clientUrl = url.replace('0.0.0.0', 'localhost');
 
     this.servers.set(name, {
+      mode: 'http',
       serverUrl: url,
       process,
       builtIn: false,
       client: new McpClient(clientUrl),
     });
-    console.log(chalk.gray(`Registered MCP server: ${name} at ${url} (client connects to ${clientUrl})`));
+    console.log(chalk.gray(`Registered HTTP MCP server: ${name} at ${url} (client connects to ${clientUrl})`));
+  }
+
+  /**
+   * Registers a stdio MCP server with the registry
+   */
+  registerStdioServer(name: string, client: McpClient, process?: ChildProcess): void {
+    this.servers.set(name, {
+      mode: 'stdio',
+      process,
+      builtIn: false,
+      client,
+    });
+    console.log(chalk.gray(`Registered stdio MCP server: ${name}`));
   }
 
   /**
@@ -78,6 +93,7 @@ export default class McpRegistry {
     const clientUrl = url.replace('0.0.0.0', 'localhost');
 
     this.servers.set(name, {
+      mode: 'http',
       serverUrl: url,
       builtIn: true,
       client: new McpClient(clientUrl),

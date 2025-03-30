@@ -154,7 +154,7 @@ async function initConfig(): Promise<void> {
         env: {
           DATA_PATH: '.boom2/memory-graph.json',
           MCP_TRANSPORT: 'http',
-          MCP_HOST: '0.0.0.0'
+          MCP_HOST: '0.0.0.0',
         },
       },
       filesystem: {
@@ -162,7 +162,7 @@ async function initConfig(): Promise<void> {
         args: ['/home/node/project'],
         env: {
           MCP_TRANSPORT: 'http',
-          MCP_HOST: '0.0.0.0'
+          MCP_HOST: '0.0.0.0',
         },
       },
     },

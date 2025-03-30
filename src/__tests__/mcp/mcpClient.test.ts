@@ -84,13 +84,13 @@ describe('McpClient', () => {
 
     it('should handle errors when loading tools', async () => {
       // Mock an error response
-      mockedAxios.get.mockRejectedValueOnce(new Error('Network error'));
+      mockedAxios.get.mockRejectedValue(new Error('Network error'));
 
-      // Create client and attempt to load tools
+      // Create client with minimal retry settings to speed up test
       const client = new McpClient(mockBaseUrl);
-
+      
       // The client should throw an error
-      await expect(client.loadTools()).rejects.toThrow('Failed to load tools from MCP server');
+      await expect(client.loadTools(1, 10)).rejects.toThrow('Failed to load tools from MCP server');
     });
   });
 
@@ -120,9 +120,12 @@ describe('McpClient', () => {
         content: 'File content',
       };
 
-      // Setup axios mocks
-      mockedAxios.get.mockResolvedValueOnce({ data: mockTools });
-      mockedAxios.post.mockResolvedValueOnce({ data: mockInvokeResponse });
+      // Setup axios mocks with clear reset between calls
+      mockedAxios.get.mockReset();
+      mockedAxios.post.mockReset();
+      
+      mockedAxios.get.mockResolvedValue({ data: mockTools });
+      mockedAxios.post.mockResolvedValue({ data: mockInvokeResponse });
 
       // Create client, load tools, and invoke a tool
       const client = new McpClient(mockBaseUrl);
@@ -174,9 +177,12 @@ describe('McpClient', () => {
         ],
       };
 
-      // Setup axios mocks
-      mockedAxios.get.mockResolvedValueOnce({ data: mockTools });
-      mockedAxios.post.mockRejectedValueOnce(new Error('Tool execution failed'));
+      // Setup axios mocks with clear reset
+      mockedAxios.get.mockReset();
+      mockedAxios.post.mockReset();
+      
+      mockedAxios.get.mockResolvedValue({ data: mockTools });
+      mockedAxios.post.mockRejectedValue(new Error('Tool execution failed'));
 
       // Create client, load tools, and attempt to invoke a tool that fails
       const client = new McpClient(mockBaseUrl);
